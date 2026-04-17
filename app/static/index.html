@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <title>CHAR.AI</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -72,7 +73,13 @@
       justify-content: center;
     }
 
-    .logo-icon svg { display: block; }
+      .logo-icon svg { display: block; }
+
+      .logo-icon img {
+        width: 16px;
+        height: 16px;
+        display: block;
+      }
 
     .nav { display: flex; gap: 3px; }
 
@@ -329,12 +336,7 @@
 <div class="topbar">
   <a class="logo" href="#">
     <div class="logo-icon">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <rect x="2" y="2" width="5" height="5" rx="1.2" fill="white" opacity="0.95"/>
-        <rect x="9" y="2" width="5" height="5" rx="1.2" fill="white" opacity="0.5"/>
-        <rect x="2" y="9" width="5" height="5" rx="1.2" fill="white" opacity="0.5"/>
-        <rect x="9" y="9" width="5" height="5" rx="1.2" fill="white" opacity="0.95"/>
-      </svg>
+      <img src="/static/favicon.svg" alt="CHAR.AI logo" />
     </div>
     CHAR.AI
   </a>

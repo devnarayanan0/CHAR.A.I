@@ -9,22 +9,17 @@ const ingestionSuccess = document.getElementById("ingestion-success");
 const processedFiles = document.getElementById("processed-files");
 const uploadedChunks = document.getElementById("uploaded-chunks");
 const ingestionStatus = document.getElementById("ingestion-status");
+const statusDot = document.getElementById("status-dot");
 const activityTable = document.getElementById("activity-table");
 
 let activityRefreshTimer = null;
 
 function showPage(page) {
   const ingestionActive = page === "ingestion";
-  pageIngestion.classList.toggle("hidden", !ingestionActive);
-  pageActivity.classList.toggle("hidden", ingestionActive);
-
-  navIngestion.className = ingestionActive
-    ? "rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white"
-    : "rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700";
-
-  navActivity.className = !ingestionActive
-    ? "rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white"
-    : "rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700";
+  pageIngestion.classList.toggle("active", ingestionActive);
+  pageActivity.classList.toggle("active", !ingestionActive);
+  navIngestion.classList.toggle("active", ingestionActive);
+  navActivity.classList.toggle("active", !ingestionActive);
 
   if (ingestionActive) {
     if (activityRefreshTimer) {
@@ -42,10 +37,11 @@ function showPage(page) {
 
 async function runIngestion() {
   runIngestionButton.disabled = true;
-  ingestionSpinner.classList.remove("hidden");
-  ingestionSuccess.classList.add("hidden");
+  ingestionSpinner.style.display = "block";
+  ingestionSuccess.style.display = "none";
   ingestionState.textContent = "Processing...";
-  ingestionStatus.textContent = "PROCESSING";
+  ingestionStatus.textContent = "Running";
+  statusDot.className = "status-dot running";
 
   try {
     const response = await fetch("/admin/ingest", { method: "POST" });
@@ -57,15 +53,17 @@ async function runIngestion() {
 
     processedFiles.textContent = String(result.processed_files ?? 0);
     uploadedChunks.textContent = String(result.uploaded_chunks ?? 0);
-    ingestionStatus.textContent = String(result.status || "SUCCESS").toUpperCase();
-    ingestionState.textContent = "Completed";
-    ingestionSuccess.classList.remove("hidden");
+      ingestionStatus.textContent = String(result.status || "SUCCESS");
+      ingestionState.textContent = "Last run: just now";
+      statusDot.className = "status-dot done";
+      ingestionSuccess.style.display = "flex";
   } catch (error) {
     ingestionState.textContent = error.message;
     ingestionStatus.textContent = "FAILED";
+      statusDot.className = "status-dot";
   } finally {
     runIngestionButton.disabled = false;
-    ingestionSpinner.classList.add("hidden");
+      ingestionSpinner.style.display = "none";
   }
 }
 
@@ -73,7 +71,7 @@ function renderActivityRows(logs) {
   if (!Array.isArray(logs) || logs.length === 0) {
     activityTable.innerHTML = `
       <tr>
-        <td colspan="2" class="px-4 py-6 text-center text-sm text-slate-500">No activity yet.</td>
+          <td colspan="3" class="empty-cell">No activity yet.</td>
       </tr>
     `;
     return;
@@ -83,8 +81,9 @@ function renderActivityRows(logs) {
     .map(
       (log) => `
         <tr>
-          <td class="px-4 py-3 text-sm text-slate-800">${log.user || "unknown"}</td>
-          <td class="px-4 py-3 text-sm text-slate-600">${new Date(log.timestamp).toLocaleString()}</td>
+            <td>${log.user || "unknown"}</td>
+            <td>${new Date(log.timestamp).toLocaleString()}</td>
+            <td><span class="pill pill-green"><span class="pill-dot"></span>${log.state || "UNKNOWN"}</span></td>
         </tr>
       `,
     )
@@ -104,7 +103,7 @@ async function loadActivity() {
   } catch (error) {
     activityTable.innerHTML = `
       <tr>
-        <td colspan="2" class="px-4 py-6 text-center text-sm text-red-600">${error.message}</td>
+          <td colspan="3" class="empty-cell">${error.message}</td>
       </tr>
     `;
   }

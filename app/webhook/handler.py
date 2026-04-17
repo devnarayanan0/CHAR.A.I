@@ -1,14 +1,24 @@
 from __future__ import annotations
 
 import logging
+import os
 
-from fastapi import HTTPException, Request
+import requests
+
+from fastapi import Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.admin.log_store import create_log
 from app.config.settings import get_settings
 from app.rag.pipeline import run_rag
-from app.users.service import normalize_user_id
+from app.users.service import (
+    get_or_create_session,
+    insert_user_once,
+    is_valid_phone_number,
+    normalize_phone_number,
+    normalize_user_id,
+    update_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,29 +63,80 @@ def _parse_whatsapp_request(data: dict) -> tuple[str, str] | None:
     return None
 
 
+def _message_response(user: str, message: str) -> dict[str, str]:
+    return {"user": user, "message": message}
+
+
+def _send_whatsapp_message(user_phone: str, response_text: str) -> None:
+    phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
+    access_token = os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
+    if not phone_number_id or not access_token:
+        logger.warning("WhatsApp outbound config missing; skipping outbound message")
+        return
+
+    url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": user_phone,
+        "type": "text",
+        "text": {"body": response_text},
+    }
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response.raise_for_status()
+    except requests.RequestException:
+        logger.exception("Failed to send outbound WhatsApp message")
+
+
 async def handle_post(req: Request):
     try:
         data = await req.json()
-    except Exception as exc:
+    except Exception:
         logger.exception("Invalid JSON payload")
-        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+        return _message_response("unknown", "Sorry, I could not read your message. Please try again.")
 
     parsed = _parse_local_request(data) or _parse_whatsapp_request(data)
     if not parsed:
-        raise HTTPException(status_code=400, detail="No supported message payload found")
+        return _message_response("unknown", "Sorry, I could not read your message. Please try again.")
 
     user, text = parsed
+    session = get_or_create_session(user)
+    state = session["state"] or "NEW"
 
-    try:
-        logger.info("User=%s Query=%s", user, text)
-        rag_result = run_rag(text)
-        create_log(user=user)
-    except Exception as exc:
-        logger.exception("RAG request failed")
-        raise HTTPException(status_code=500, detail="RAG request failed") from exc
+    response_text = ""
 
-    return {
-        "user": user,
-        "answer": rag_result["answer"],
-        "context": rag_result["context"],
-    }
+    if state == "NEW":
+        update_session(user, state="ASK_NAME")
+        response_text = "Welcome to CHAR.AI. What is your name?"
+
+    elif state == "ASK_NAME":
+        update_session(user, state="ASK_PHONE", name=text)
+        response_text = "Please enter your phone number"
+
+    elif state == "ASK_PHONE":
+        if not is_valid_phone_number(text):
+            response_text = "Please enter a valid phone number with 10 to 15 digits."
+        else:
+            phone_number = normalize_phone_number(text)
+            name = session.get("name") or "User"
+            insert_user_once(name=name, phone_number=phone_number)
+            update_session(user, state="ACTIVE")
+            response_text = "Welcome to CHAR.AI. You can now ask your queries"
+
+    else:
+        try:
+            rag_result = run_rag(text)
+            response_text = rag_result.get("answer") or "I could not find an answer right now."
+        except Exception:
+            logger.exception("RAG request failed")
+            response_text = "Sorry, I am unable to answer right now. Please try again."
+
+    current_state = (get_or_create_session(user).get("state") or "NEW")
+    create_log(user=user, state=current_state)
+    _send_whatsapp_message(user_phone=user, response_text=response_text)
+    return _message_response(user, response_text)

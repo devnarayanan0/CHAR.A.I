@@ -7,3 +7,4 @@ sentence-transformers<3
 transformers<5
 pinecone
 pypdf
+supabase

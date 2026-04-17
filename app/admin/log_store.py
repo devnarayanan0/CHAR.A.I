@@ -23,9 +23,10 @@ def get_log_store() -> InMemoryLogStore:
     return InMemoryLogStore()
 
 
-def create_log(user: str) -> dict[str, Any]:
+def create_log(user: str, state: str) -> dict[str, Any]:
     record = {
         "user": user,
+        "state": state,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     return get_log_store().insert_log(record)

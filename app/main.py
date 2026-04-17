@@ -19,9 +19,7 @@ static_dir = Path(__file__).parent / "static"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    logger.info("Starting local document ingestion")
-    result = ingest_local_documents()
-    logger.info("Local document ingestion complete: %s", result)
+    logger.info("Startup complete (manual ingestion mode)")
     yield
 
 

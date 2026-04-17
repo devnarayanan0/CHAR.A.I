@@ -20,6 +20,9 @@ class Settings:
     embedding_model_name = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-base-en-v1.5")
     data_dir = os.getenv("DATA_DIR", "data")
 
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    supabase_key = os.getenv("SUPABASE_KEY", "")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

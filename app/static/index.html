@@ -3,17 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CHAR.AI Dashboard</title>
+    <title>CHAR.A.I</title>
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body class="bg-white text-slate-900">
     <div class="min-h-screen">
       <header class="border-b border-slate-200 bg-white">
         <div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-          <h1 class="text-xl font-semibold">CHAR.AI Dashboard</h1>
+          <h1 class="text-xl font-semibold">CHAR.A.I</h1>
           <nav class="flex gap-2">
             <button id="nav-ingestion" class="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white">Ingestion</button>
-            <button id="nav-activity" class="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">User Activity</button>
+            <button id="nav-activity" class="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Logs</button>
           </nav>
         </div>
       </header>
@@ -57,8 +57,8 @@
 
         <section id="page-activity" class="hidden space-y-6">
           <div>
-            <h2 class="text-lg font-semibold">User Activity</h2>
-            <p class="mt-1 text-sm text-slate-600">Recent users who accessed the system.</p>
+            <h2 class="text-lg font-semibold">Logs</h2>
+            <p class="mt-1 text-sm text-slate-600">Recent logs from the system.</p>
           </div>
 
           <div class="overflow-hidden rounded-lg border border-slate-200 bg-white">
@@ -71,7 +71,7 @@
               </thead>
               <tbody id="activity-table" class="divide-y divide-slate-200 bg-white">
                 <tr>
-                  <td colspan="2" class="px-4 py-6 text-center text-sm text-slate-500">Loading activity...</td>
+                  <td colspan="2" class="px-4 py-6 text-center text-sm text-slate-500">Loading logs...</td>
                 </tr>
               </tbody>
             </table>

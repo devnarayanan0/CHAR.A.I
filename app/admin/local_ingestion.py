@@ -11,7 +11,7 @@ from pypdf import PdfReader
 
 from app.config.settings import get_settings
 from app.embeddings.model import embed
-from app.vectordb.pinecone_client import delete_vectors, upsert_chunks
+from app.vectordb.pinecone_client import delete_vectors, get_vector_count, upsert_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -214,9 +214,23 @@ def ingest_local_documents() -> dict[str, int]:
         uploaded += len(ids)
 
     _save_state(state)
-    return {
+    result = {
         "processed_files": processed,
         "removed_files": removed,
         "skipped_files": skipped,
         "uploaded_chunks": uploaded,
     }
+
+    logger.info(
+        "Ingestion summary processed=%s removed=%s skipped=%s uploaded_chunks=%s",
+        result["processed_files"],
+        result["removed_files"],
+        result["skipped_files"],
+        result["uploaded_chunks"],
+    )
+    try:
+        logger.info("Pinecone total_vector_count=%s", get_vector_count())
+    except Exception as exc:
+        logger.warning("Unable to fetch Pinecone vector count: %s", exc)
+
+    return result

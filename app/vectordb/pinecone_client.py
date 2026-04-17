@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import logging
 from typing import Iterable
 
 from pinecone import Pinecone
 
 from app.config.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -35,7 +38,9 @@ def query_pinecone(vector: list[float], top_k: int = 3) -> list[str]:
     )
 
     chunks: list[str] = []
-    for match in result.get("matches", []):
+    matches = result.get("matches", [])
+    logger.info("Pinecone retrieval matches=%s top_k=%s", len(matches), top_k)
+    for match in matches:
         metadata = match.get("metadata") or {}
         text = metadata.get("text")
         if text:
@@ -62,3 +67,10 @@ def delete_vectors(ids: list[str]) -> None:
     if not ids:
         return
     get_index().delete(ids=ids)
+
+
+def get_vector_count() -> int:
+    stats = get_index().describe_index_stats()
+    if hasattr(stats, "to_dict"):
+        stats = stats.to_dict()
+    return int(stats.get("total_vector_count", 0))

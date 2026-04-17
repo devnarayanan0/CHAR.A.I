@@ -46,7 +46,7 @@ def _parse_whatsapp_request(data: dict) -> tuple[str, str] | None:
                 default_user = profile.get("name") or contacts[0].get("wa_id")
 
             for message in value.get("messages", []):
-                user = normalize_user_id(default_user or message.get("from"))
+                user = normalize_user_id(message.get("from") or default_user)
                 text = ((message.get("text") or {}).get("body") or "").strip()
                 if text:
                     return user, text

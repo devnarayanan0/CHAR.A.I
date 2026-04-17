@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CHAR.AI Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-white text-slate-900">
+    <div class="min-h-screen">
+      <header class="border-b border-slate-200 bg-white">
+        <div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+          <h1 class="text-xl font-semibold">CHAR.AI Dashboard</h1>
+          <nav class="flex gap-2">
+            <button id="nav-ingestion" class="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white">Ingestion</button>
+            <button id="nav-activity" class="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">User Activity</button>
+          </nav>
+        </div>
+      </header>
+
+      <main class="mx-auto max-w-5xl px-6 py-8">
+        <section id="page-ingestion" class="space-y-6">
+          <div>
+            <h2 class="text-lg font-semibold">Data Ingestion</h2>
+            <p class="mt-1 text-sm text-slate-600">Push documents from the local <code>data/</code> folder into Pinecone.</p>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-6">
+            <div class="flex items-center gap-4">
+              <button id="run-ingestion" class="inline-flex items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-400">
+                <span id="ingestion-spinner" class="mr-2 hidden h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
+                Run Ingestion
+              </button>
+              <span id="ingestion-state" class="text-sm text-slate-600">Ready</span>
+            </div>
+
+            <div id="ingestion-success" class="mt-4 hidden rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+              Data successfully embedded and pushed to vector database
+            </div>
+
+            <div class="mt-6 grid gap-3 sm:grid-cols-3">
+              <div class="rounded-md border border-slate-200 p-4">
+                <p class="text-xs uppercase tracking-wide text-slate-500">Processed Files</p>
+                <p id="processed-files" class="mt-2 text-2xl font-semibold">0</p>
+              </div>
+              <div class="rounded-md border border-slate-200 p-4">
+                <p class="text-xs uppercase tracking-wide text-slate-500">Uploaded Chunks</p>
+                <p id="uploaded-chunks" class="mt-2 text-2xl font-semibold">0</p>
+              </div>
+              <div class="rounded-md border border-slate-200 p-4">
+                <p class="text-xs uppercase tracking-wide text-slate-500">Status</p>
+                <p id="ingestion-status" class="mt-2 text-2xl font-semibold">IDLE</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="page-activity" class="hidden space-y-6">
+          <div>
+            <h2 class="text-lg font-semibold">User Activity</h2>
+            <p class="mt-1 text-sm text-slate-600">Recent users who accessed the system.</p>
+          </div>
+
+          <div class="overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <table class="min-w-full divide-y divide-slate-200">
+              <thead class="bg-slate-50">
+                <tr>
+                  <th class="px-4 py-3 text-left text-sm font-medium text-slate-600">User</th>
+                  <th class="px-4 py-3 text-left text-sm font-medium text-slate-600">Login Time</th>
+                </tr>
+              </thead>
+              <tbody id="activity-table" class="divide-y divide-slate-200 bg-white">
+                <tr>
+                  <td colspan="2" class="px-4 py-6 text-center text-sm text-slate-500">Loading activity...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

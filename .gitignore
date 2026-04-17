@@ -1,0 +1,21 @@
+# Environment and secrets
+.env
+*.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local pipeline state
+state.json
+data/.ingestion_state.json
+
+# Virtual environments
+.venv/
+venv/
+
+# Service account credentials
+*.json
+
+# OS files
+.DS_Store

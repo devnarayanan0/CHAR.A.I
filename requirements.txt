@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-dotenv
+requests
+numpy<2
+sentence-transformers<3
+transformers<5
+pinecone
+pypdf

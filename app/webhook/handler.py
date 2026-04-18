@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 import requests
 
@@ -13,12 +14,12 @@ from app.config.settings import get_settings
 from app.rag.client import query_rag_service
 from app.users.service import (
     get_or_create_session,
-    insert_user_once,
     normalize_user_id,
     update_session,
 )
 
 logger = logging.getLogger(__name__)
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 async def handle_get(req: Request):
@@ -76,9 +77,8 @@ def _has_whatsapp_messages(data: dict) -> bool:
     return False
 
 
-def _is_valid_registration_phone(value: str) -> bool:
-    normalized = value.strip()
-    return normalized.isdigit() and 10 <= len(normalized) <= 15
+def _is_valid_email(value: str) -> bool:
+    return bool(_EMAIL_PATTERN.fullmatch(value.strip()))
 
 
 def _message_response(user: str, message: str) -> dict[str, str]:
@@ -139,26 +139,25 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
     elif state_before == "ASK_NAME":
         name = text.strip()
         if name:
-            state_after = "ASK_PHONE"
-            response_text = "Please enter your phone number"
+            state_after = "ASK_EMAIL"
+            response_text = "Enter your email"
             update_session(user, state=state_after, name=name)
         else:
             state_after = "ASK_NAME"
             response_text = "Something went wrong. Please try again."
             update_session(user, state=state_after)
 
-    elif state_before == "ASK_PHONE":
-        if not _is_valid_registration_phone(text):
-            state_after = "ASK_PHONE"
-            response_text = "Invalid phone number. Try again."
+    elif state_before == "ASK_EMAIL":
+        email = text.strip()
+        if not _is_valid_email(email):
+            state_after = "ASK_EMAIL"
+            response_text = "Invalid email, try again"
             update_session(user, state=state_after)
         else:
-            phone_number = text.strip()
             name = str(session.get("name") or "User")
-            insert_user_once(name=name, phone_number=phone_number)
             state_after = "ACTIVE"
-            response_text = f"Welcome {name}! You are now registered."
-            update_session(user, state=state_after)
+            response_text = f"Welcome {name}!"
+            update_session(user, state=state_after, email=email)
 
     elif state_before == "ACTIVE":
         state_after = "ACTIVE"
@@ -180,9 +179,17 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
     return response_text
 
 
-async def _background_send_reply(user: str, reply: str) -> None:
+async def _background_send_reply(user: str, text: str, reply: str) -> None:
     print("=== BACKGROUND START ===")
     final_reply = reply
+
+    if final_reply == "CALL_RAG":
+        try:
+            rag_result = await asyncio.to_thread(query_rag_service, text)
+            final_reply = str(rag_result.get("answer") or "")
+        except Exception:
+            logger.exception("RAG request failed")
+            final_reply = "Sorry, I couldn't process your request right now."
 
     if not final_reply:
         final_reply = "Something went wrong. Please try again."
@@ -217,9 +224,9 @@ async def handle_post(req: Request):
         print("STEP 1: parsing payload")
         print("STEP 2: sender =", user)
         print("STEP 3: text =", text)
-        state_before = get_or_create_session(user).get("state") or "NEW"
+        state_before = (await asyncio.to_thread(get_or_create_session, user)).get("state") or "NEW"
         print("STEP 4: state before =", state_before)
-        response_text = _compute_reply_and_update_state(user, text)
+        response_text = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
         print("STEP 5: reply =", response_text)
         if response_text == "CALL_RAG":
             try:
@@ -240,21 +247,14 @@ async def handle_post(req: Request):
         print("STEP 1: parsing payload")
         print("STEP 2: sender =", user)
         print("STEP 3: text =", text)
-        state_before = get_or_create_session(user).get("state") or "NEW"
+        state_before = (await asyncio.to_thread(get_or_create_session, user)).get("state") or "NEW"
         print("STEP 4: state before =", state_before)
         logger.info("Received message from %s: %s", user, text)
-        reply = _compute_reply_and_update_state(user, text)
-        if reply == "CALL_RAG":
-            try:
-                rag_result = await asyncio.to_thread(query_rag_service, text)
-                reply = str(rag_result.get("answer") or "")
-            except Exception:
-                logger.exception("RAG request failed")
-                reply = "Sorry, I couldn't process your request right now."
+        reply = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
         if not reply:
             reply = "Something went wrong. Please try again."
         print("STEP 5: reply =", reply)
         print("STEP 6: scheduling background task")
-        asyncio.create_task(_background_send_reply(user, reply))
+        asyncio.create_task(_background_send_reply(user, text, reply))
 
     return {"status": "accepted"}

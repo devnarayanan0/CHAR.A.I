@@ -3,3 +3,4 @@ uvicorn
 gunicorn
 python-dotenv
 requests
+supabase

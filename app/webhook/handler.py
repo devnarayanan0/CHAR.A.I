@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-import os
 
 import requests
 
@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.admin.log_store import create_log
 from app.config.settings import get_settings
-from app.rag.pipeline import run_rag
+from app.rag.client import query_rag_service
 from app.users.service import (
     get_or_create_session,
     insert_user_once,
@@ -68,8 +68,9 @@ def _message_response(user: str, message: str) -> dict[str, str]:
 
 
 def _send_whatsapp_message(user_phone: str, response_text: str) -> None:
-    phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
-    access_token = os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
+    settings = get_settings()
+    phone_number_id = settings.whatsapp_phone_number_id.strip()
+    access_token = settings.whatsapp_access_token.strip()
     if not phone_number_id or not access_token:
         logger.warning("WhatsApp outbound config missing; skipping outbound message")
         return
@@ -89,6 +90,8 @@ def _send_whatsapp_message(user_phone: str, response_text: str) -> None:
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=15)
         response.raise_for_status()
+    except requests.Timeout:
+        logger.exception("WhatsApp outbound request timed out")
     except requests.RequestException:
         logger.exception("Failed to send outbound WhatsApp message")
 
@@ -130,13 +133,16 @@ async def handle_post(req: Request):
 
     else:
         try:
-            rag_result = run_rag(text)
-            response_text = rag_result.get("answer") or "I could not find an answer right now."
-        except Exception:
+            rag_result = await asyncio.to_thread(query_rag_service, text)
+            response_text = str(rag_result.get("answer") or "I could not find an answer right now.")
+        except RuntimeError:
             logger.exception("RAG request failed")
+            response_text = "Sorry, I am unable to answer right now. Please try again."
+        except Exception:
+            logger.exception("Unexpected error while querying RAG service")
             response_text = "Sorry, I am unable to answer right now. Please try again."
 
     current_state = (get_or_create_session(user).get("state") or "NEW")
     create_log(user=user, state=current_state)
-    _send_whatsapp_message(user_phone=user, response_text=response_text)
+    asyncio.create_task(asyncio.to_thread(_send_whatsapp_message, user, response_text))
     return _message_response(user, response_text)

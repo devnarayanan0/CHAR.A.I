@@ -1,11 +1,12 @@
+import asyncio
 import logging
 from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException
 
-from app.admin.local_ingestion import ingest_local_documents
 from app.admin.log_store import get_recent_logs
 from app.config.settings import get_settings
+from app.rag.client import ingest_rag_service
 
 logger = logging.getLogger(__name__)
 
@@ -98,13 +99,14 @@ async def admin_users():
 @router.post("/ingest")
 async def ingest_documents():
     try:
-        result = ingest_local_documents()
+        result = await asyncio.to_thread(ingest_rag_service)
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        logger.exception("RAG ingestion request failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Local ingestion failed")
+        logger.exception("Unexpected RAG ingestion failure")
         raise HTTPException(status_code=500, detail="Local ingestion failed") from exc
 
-    return {
-        "processed_files": result["processed_files"],
-        "uploaded_chunks": result["uploaded_chunks"],
-        "status": "SUCCESS",
-    }
+    return result

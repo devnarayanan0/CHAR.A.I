@@ -6,7 +6,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.admin.local_ingestion import ingest_local_documents
 from app.admin.routes import router as admin_router
 from app.config.settings import get_settings
 from app.webhook.handler import handle_get, handle_post
@@ -19,7 +18,7 @@ static_dir = Path(__file__).parent / "static"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    logger.info("Startup complete (manual ingestion mode)")
+    logger.info("Startup complete")
     yield
 
 

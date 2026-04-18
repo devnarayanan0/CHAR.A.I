@@ -6,7 +6,7 @@ import logging
 import requests
 
 from fastapi import Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
 
 from app.admin.log_store import create_log
 from app.config.settings import get_settings
@@ -29,11 +29,15 @@ async def handle_get(req: Request):
     token = params.get("hub.verify_token")
     challenge = params.get("hub.challenge")
 
+    logger.info("Received webhook verification request mode=%s", mode)
+
     settings = get_settings()
     if mode == "subscribe" and token == settings.whatsapp_verify_token:
+        logger.info("Webhook verification succeeded")
         return PlainTextResponse(content=challenge or "")
 
-    return JSONResponse(content={"error": "verification failed"}, status_code=403)
+    logger.warning("Webhook verification failed")
+    return PlainTextResponse(content="verification failed", status_code=403)
 
 
 def _parse_local_request(data: dict) -> tuple[str, str] | None:

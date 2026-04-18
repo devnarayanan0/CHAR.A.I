@@ -67,6 +67,20 @@ def _parse_whatsapp_request(data: dict) -> tuple[str, str] | None:
     return None
 
 
+def _is_whatsapp_event(data: dict) -> bool:
+    return isinstance(data.get("entry"), list)
+
+
+def _has_whatsapp_messages(data: dict) -> bool:
+    for entry in data.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            messages = value.get("messages", [])
+            if isinstance(messages, list) and messages:
+                return True
+    return False
+
+
 def _message_response(user: str, message: str) -> dict[str, str]:
     return {"user": user, "message": message}
 
@@ -92,6 +106,7 @@ def _send_whatsapp_message(user_phone: str, response_text: str) -> None:
     }
 
     try:
+        logger.info("Sending reply to %s", user_phone)
         response = requests.post(url, headers=headers, json=payload, timeout=15)
         response.raise_for_status()
     except requests.Timeout:
@@ -100,18 +115,9 @@ def _send_whatsapp_message(user_phone: str, response_text: str) -> None:
         logger.exception("Failed to send outbound WhatsApp message")
 
 
-async def handle_post(req: Request):
-    try:
-        data = await req.json()
-    except Exception:
-        logger.exception("Invalid JSON payload")
-        return _message_response("unknown", "Sorry, I could not read your message. Please try again.")
+async def _process_user_message(user: str, text: str, *, send_whatsapp_reply: bool) -> str:
+    logger.info("Received message from %s: %s", user, text)
 
-    parsed = _parse_local_request(data) or _parse_whatsapp_request(data)
-    if not parsed:
-        return _message_response("unknown", "Sorry, I could not read your message. Please try again.")
-
-    user, text = parsed
     session = get_or_create_session(user)
     state = session["state"] or "NEW"
 
@@ -148,5 +154,35 @@ async def handle_post(req: Request):
 
     current_state = (get_or_create_session(user).get("state") or "NEW")
     create_log(user=user, state=current_state)
-    asyncio.create_task(asyncio.to_thread(_send_whatsapp_message, user, response_text))
-    return _message_response(user, response_text)
+
+    if send_whatsapp_reply:
+        asyncio.create_task(asyncio.to_thread(_send_whatsapp_message, user, response_text))
+
+    return response_text
+
+
+async def handle_post(req: Request):
+    try:
+        data = await req.json()
+    except Exception:
+        logger.exception("Invalid JSON payload")
+        return _message_response("unknown", "Sorry, I could not read your message. Please try again.")
+
+    local_parsed = _parse_local_request(data)
+    if local_parsed:
+        user, text = local_parsed
+        response_text = await _process_user_message(user, text, send_whatsapp_reply=False)
+        return _message_response(user, response_text)
+
+    if _is_whatsapp_event(data) and not _has_whatsapp_messages(data):
+        logger.info("Ignoring non-message WhatsApp event")
+        return {"status": "ignored"}
+
+    parsed = _parse_whatsapp_request(data)
+    if not parsed:
+        logger.info("Webhook payload does not contain a valid message")
+        return {"status": "ignored"}
+
+    user, text = parsed
+    asyncio.create_task(_process_user_message(user, text, send_whatsapp_reply=True))
+    return {"status": "accepted"}

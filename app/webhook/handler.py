@@ -85,13 +85,16 @@ def _message_response(user: str, message: str) -> dict[str, str]:
     return {"user": user, "message": message}
 
 
-def _send_whatsapp_message(user_phone: str, response_text: str) -> None:
+def send_whatsapp_message(user_phone: str, response_text: str) -> None:
     settings = get_settings()
     phone_number_id = settings.whatsapp_phone_number_id.strip()
     access_token = settings.whatsapp_access_token.strip()
     if not phone_number_id or not access_token:
         logger.warning("WhatsApp outbound config missing; skipping outbound message")
         return
+
+    if not response_text:
+        response_text = "Something went wrong. Please try again."
 
     url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
     payload = {
@@ -106,6 +109,7 @@ def _send_whatsapp_message(user_phone: str, response_text: str) -> None:
     }
 
     try:
+        print("Sending reply:", response_text)
         logger.info("Sending reply to %s", user_phone)
         response = requests.post(url, headers=headers, json=payload, timeout=30)
         logger.info("WhatsApp API response status=%s body=%s", response.status_code, response.text)
@@ -118,7 +122,7 @@ def _send_whatsapp_message(user_phone: str, response_text: str) -> None:
 
 
 def send_whatsapp_test_message(user_phone: str, response_text: str) -> None:
-    _send_whatsapp_message(user_phone, response_text)
+    send_whatsapp_message(user_phone, response_text)
 
 
 def _compute_reply_and_update_state(user: str, text: str) -> str:
@@ -176,27 +180,16 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
     return response_text
 
 
-async def _background_send_reply(user: str, text: str, reply: str) -> None:
+async def _background_send_reply(user: str, reply: str) -> None:
     print("=== BACKGROUND START ===")
     final_reply = reply
-
-    if final_reply == "CALL_RAG":
-        try:
-            rag_result = await asyncio.to_thread(query_rag_service, text)
-            final_reply = str(rag_result.get("answer") or "")
-        except RuntimeError:
-            logger.exception("RAG request failed")
-            final_reply = "Sorry, I couldn't process your request right now."
-        except Exception:
-            logger.exception("Unexpected error while querying RAG service")
-            final_reply = "Sorry, I couldn't process your request right now."
 
     if not final_reply:
         final_reply = "Something went wrong. Please try again."
 
     print("Sending reply:", final_reply)
     logger.info("Final reply for %s: %s", user, final_reply)
-    await asyncio.to_thread(_send_whatsapp_message, user, final_reply)
+    await asyncio.to_thread(send_whatsapp_message, user, final_reply)
 
 
 async def handle_post(req: Request):
@@ -251,8 +244,17 @@ async def handle_post(req: Request):
         print("STEP 4: state before =", state_before)
         logger.info("Received message from %s: %s", user, text)
         reply = _compute_reply_and_update_state(user, text)
+        if reply == "CALL_RAG":
+            try:
+                rag_result = await asyncio.to_thread(query_rag_service, text)
+                reply = str(rag_result.get("answer") or "")
+            except Exception:
+                logger.exception("RAG request failed")
+                reply = "Sorry, I couldn't process your request right now."
+        if not reply:
+            reply = "Something went wrong. Please try again."
         print("STEP 5: reply =", reply)
         print("STEP 6: scheduling background task")
-        asyncio.create_task(_background_send_reply(user, text, reply))
+        asyncio.create_task(_background_send_reply(user, reply))
 
     return {"status": "accepted"}

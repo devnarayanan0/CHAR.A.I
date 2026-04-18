@@ -5,6 +5,7 @@ import re
 from functools import lru_cache
 from threading import Lock
 from typing import Literal
+from uuid import uuid4
 
 from app.config.settings import get_settings
 
@@ -50,7 +51,7 @@ def get_user_by_phone(phone: str) -> dict | None:
     try:
         result = (
             client.table("users")
-            .select("id, name, email, phone, state, created_at")
+            .select("id, name, email, phone, state")
             .eq("phone", phone)
             .limit(1)
             .execute()
@@ -85,7 +86,7 @@ def update_user_email(phone: str, email: str) -> bool:
         return False
 
     try:
-        result = client.table("users").insert({"phone": phone, "state": "NEW"}).execute()
+        result = client.table("users").insert({"id": str(uuid4()), "phone": phone, "state": "NEW"}).execute()
         rows = getattr(result, "data", None) or []
         if rows:
             logger.info("DB: user created phone=%s", phone)
@@ -133,7 +134,7 @@ def upsert_user(
 ) -> dict | None:
     existing = get_user_by_phone(phone)
     if existing is None:
-        payload: dict[str, str] = {"phone": phone, "state": state or "NEW"}
+        payload: dict[str, str] = {"id": str(uuid4()), "phone": phone, "state": state or "NEW"}
         if name:
             payload["name"] = name
         if email:

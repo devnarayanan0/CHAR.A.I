@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
@@ -8,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.admin.routes import router as admin_router
 from app.config.settings import get_settings
+from app.rag.client import test_rag_query
 from app.webhook.handler import handle_get, handle_post, send_whatsapp_message
 
 logging.basicConfig(level=logging.INFO)
@@ -50,3 +52,8 @@ async def test_send():
         return {"status": "failed", "error": "Set WHATSAPP_TEST_NUMBER for test-send"}
     send_whatsapp_message(to_number, "TEST MESSAGE WORKING")
     return {"status": "sent"}
+
+
+@app.get("/test-rag")
+async def test_rag():
+    return await asyncio.to_thread(test_rag_query, "hello")

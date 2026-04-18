@@ -209,11 +209,7 @@ async def handle_post(req: Request):
     print("=== WEBHOOK HIT ===")
     print("RAW BODY:", data)
 
-    entry = data.get("entry", [])
-    changes = entry[0].get("changes", []) if entry else []
-    value = changes[0].get("value", {}) if changes else {}
-    messages = value.get("messages")
-    if _is_whatsapp_event(data) and not messages:
+    if _is_whatsapp_event(data) and not _has_whatsapp_messages(data):
         print("No messages in payload")
         logger.info("Ignoring non-message WhatsApp event")
         return {"status": "accepted"}

@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.admin.routes import router as admin_router
 from app.config.settings import get_settings
-from app.webhook.handler import handle_get, handle_post
+from app.webhook.handler import handle_get, handle_post, send_whatsapp_test_message
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,3 +40,13 @@ async def verify(req: Request):
 @app.post("/webhook")
 async def webhook(req: Request):
     return await handle_post(req)
+
+
+@app.get("/test-send")
+async def test_send():
+    settings = get_settings()
+    to_number = settings.whatsapp_test_number.strip()
+    if not to_number:
+        return {"status": "failed", "error": "Set WHATSAPP_TEST_NUMBER for test-send"}
+    send_whatsapp_test_message(to_number, "TEST MESSAGE WORKING")
+    return {"status": "sent"}

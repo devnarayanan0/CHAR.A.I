@@ -12,6 +12,7 @@ class Settings:
     whatsapp_verify_token = os.getenv("VERIFY_TOKEN", os.getenv("WHATSAPP_TOKEN", ""))
     whatsapp_access_token = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
     whatsapp_phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+    whatsapp_test_number = os.getenv("WHATSAPP_TEST_NUMBER", "")
     groq_api_key = os.getenv("GROQ_API_KEY", "")
     groq_model_name = os.getenv("GROQ_MODEL_NAME", "llama-3.1-8b-instant")
     rag_service_url = os.getenv("RAG_SERVICE_URL", "").rstrip("/")

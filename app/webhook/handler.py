@@ -107,13 +107,18 @@ def _send_whatsapp_message(user_phone: str, response_text: str) -> None:
 
     try:
         logger.info("Sending reply to %s", user_phone)
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
         logger.info("WhatsApp API response status=%s body=%s", response.status_code, response.text)
+        print("WHATSAPP STATUS:", response.status_code)
+        print("WHATSAPP RESPONSE:", response.text)
         response.raise_for_status()
-    except requests.Timeout:
-        logger.exception("WhatsApp outbound request timed out")
-    except requests.RequestException:
+    except Exception as exc:
         logger.exception("Failed to send outbound WhatsApp message")
+        print("WHATSAPP ERROR:", str(exc))
+
+
+def send_whatsapp_test_message(user_phone: str, response_text: str) -> None:
+    _send_whatsapp_message(user_phone, response_text)
 
 
 def _compute_reply_and_update_state(user: str, text: str) -> str:
@@ -172,6 +177,7 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
 
 
 async def _background_send_reply(user: str, text: str, reply: str) -> None:
+    print("=== BACKGROUND START ===")
     final_reply = reply
 
     if final_reply == "CALL_RAG":
@@ -188,6 +194,7 @@ async def _background_send_reply(user: str, text: str, reply: str) -> None:
     if not final_reply:
         final_reply = "Something went wrong. Please try again."
 
+    print("Sending reply:", final_reply)
     logger.info("Final reply for %s: %s", user, final_reply)
     await asyncio.to_thread(_send_whatsapp_message, user, final_reply)
 
@@ -199,10 +206,28 @@ async def handle_post(req: Request):
         logger.exception("Invalid JSON payload")
         return _message_response("unknown", "Sorry, I could not read your message. Please try again.")
 
+    print("=== WEBHOOK HIT ===")
+    print("RAW BODY:", data)
+
+    entry = data.get("entry", [])
+    changes = entry[0].get("changes", []) if entry else []
+    value = changes[0].get("value", {}) if changes else {}
+    messages = value.get("messages")
+    if _is_whatsapp_event(data) and not messages:
+        print("No messages in payload")
+        logger.info("Ignoring non-message WhatsApp event")
+        return {"status": "accepted"}
+
     local_parsed = _parse_local_request(data)
     if local_parsed:
         user, text = local_parsed
+        print("STEP 1: parsing payload")
+        print("STEP 2: sender =", user)
+        print("STEP 3: text =", text)
+        state_before = get_or_create_session(user).get("state") or "NEW"
+        print("STEP 4: state before =", state_before)
         response_text = _compute_reply_and_update_state(user, text)
+        print("STEP 5: reply =", response_text)
         if response_text == "CALL_RAG":
             try:
                 rag_result = await asyncio.to_thread(query_rag_service, text)
@@ -213,18 +238,21 @@ async def handle_post(req: Request):
             response_text = "Something went wrong. Please try again."
         return _message_response(user, response_text)
 
-    if _is_whatsapp_event(data) and not _has_whatsapp_messages(data):
-        logger.info("Ignoring non-message WhatsApp event")
-        return {"status": "accepted"}
-
     parsed_messages = _extract_whatsapp_messages(data)
     if not parsed_messages:
         logger.info("Webhook payload does not contain valid WhatsApp messages")
         return {"status": "accepted"}
 
     for user, text in parsed_messages:
+        print("STEP 1: parsing payload")
+        print("STEP 2: sender =", user)
+        print("STEP 3: text =", text)
+        state_before = get_or_create_session(user).get("state") or "NEW"
+        print("STEP 4: state before =", state_before)
         logger.info("Received message from %s: %s", user, text)
         reply = _compute_reply_and_update_state(user, text)
+        print("STEP 5: reply =", reply)
+        print("STEP 6: scheduling background task")
         asyncio.create_task(_background_send_reply(user, text, reply))
 
     return {"status": "accepted"}

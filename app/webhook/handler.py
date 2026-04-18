@@ -14,8 +14,6 @@ from app.rag.client import query_rag_service
 from app.users.service import (
     get_or_create_session,
     insert_user_once,
-    is_valid_phone_number,
-    normalize_phone_number,
     normalize_user_id,
     update_session,
 )
@@ -48,23 +46,20 @@ def _parse_local_request(data: dict) -> tuple[str, str] | None:
     return None
 
 
-def _parse_whatsapp_request(data: dict) -> tuple[str, str] | None:
+def _extract_whatsapp_messages(data: dict) -> list[tuple[str, str]]:
+    extracted: list[tuple[str, str]] = []
     entries = data.get("entry", [])
     for entry in entries:
         for change in entry.get("changes", []):
             value = change.get("value", {})
-            contacts = value.get("contacts", [])
-            default_user = None
-            if contacts:
-                profile = contacts[0].get("profile") or {}
-                default_user = profile.get("name") or contacts[0].get("wa_id")
-
             for message in value.get("messages", []):
-                user = normalize_user_id(message.get("from") or default_user)
+                user = normalize_user_id(message.get("from"))
+                if not user:
+                    continue
                 text = ((message.get("text") or {}).get("body") or "").strip()
                 if text:
-                    return user, text
-    return None
+                    extracted.append((user, text))
+    return extracted
 
 
 def _is_whatsapp_event(data: dict) -> bool:
@@ -79,6 +74,11 @@ def _has_whatsapp_messages(data: dict) -> bool:
             if isinstance(messages, list) and messages:
                 return True
     return False
+
+
+def _is_valid_registration_phone(value: str) -> bool:
+    normalized = value.strip()
+    return normalized.isdigit() and 10 <= len(normalized) <= 15
 
 
 def _message_response(user: str, message: str) -> dict[str, str]:
@@ -108,6 +108,7 @@ def _send_whatsapp_message(user_phone: str, response_text: str) -> None:
     try:
         logger.info("Sending reply to %s", user_phone)
         response = requests.post(url, headers=headers, json=payload, timeout=15)
+        logger.info("WhatsApp API response status=%s body=%s", response.status_code, response.text)
         response.raise_for_status()
     except requests.Timeout:
         logger.exception("WhatsApp outbound request timed out")
@@ -115,50 +116,80 @@ def _send_whatsapp_message(user_phone: str, response_text: str) -> None:
         logger.exception("Failed to send outbound WhatsApp message")
 
 
-async def _process_user_message(user: str, text: str, *, send_whatsapp_reply: bool) -> str:
-    logger.info("Received message from %s: %s", user, text)
-
+def _compute_reply_and_update_state(user: str, text: str) -> str:
     session = get_or_create_session(user)
-    state = session["state"] or "NEW"
-
+    state_before = session.get("state") or "NEW"
     response_text = ""
+    state_after = state_before
 
-    if state == "NEW":
-        update_session(user, state="ASK_NAME")
-        response_text = "Welcome to CHAR.AI. What is your name?"
+    if state_before == "NEW":
+        state_after = "ASK_NAME"
+        response_text = "Hi! What is your name?"
+        update_session(user, state=state_after)
 
-    elif state == "ASK_NAME":
-        update_session(user, state="ASK_PHONE", name=text)
-        response_text = "Please enter your phone number"
-
-    elif state == "ASK_PHONE":
-        if not is_valid_phone_number(text):
-            response_text = "Please enter a valid phone number with 10 to 15 digits."
+    elif state_before == "ASK_NAME":
+        name = text.strip()
+        if name:
+            state_after = "ASK_PHONE"
+            response_text = "Please enter your phone number"
+            update_session(user, state=state_after, name=name)
         else:
-            phone_number = normalize_phone_number(text)
-            name = session.get("name") or "User"
+            state_after = "ASK_NAME"
+            response_text = "Something went wrong. Please try again."
+            update_session(user, state=state_after)
+
+    elif state_before == "ASK_PHONE":
+        if not _is_valid_registration_phone(text):
+            state_after = "ASK_PHONE"
+            response_text = "Invalid phone number. Try again."
+            update_session(user, state=state_after)
+        else:
+            phone_number = text.strip()
+            name = str(session.get("name") or "User")
             insert_user_once(name=name, phone_number=phone_number)
-            update_session(user, state="ACTIVE")
-            response_text = "Welcome to CHAR.AI. You can now ask your queries"
+            state_after = "ACTIVE"
+            response_text = f"Welcome {name}! You are now registered."
+            update_session(user, state=state_after)
+
+    elif state_before == "ACTIVE":
+        state_after = "ACTIVE"
+        response_text = "CALL_RAG"
+        update_session(user, state=state_after)
 
     else:
-        try:
-            rag_result = await asyncio.to_thread(query_rag_service, text)
-            response_text = str(rag_result.get("answer") or "I could not find an answer right now.")
-        except RuntimeError:
-            logger.exception("RAG request failed")
-            response_text = "Sorry, I am unable to answer right now. Please try again."
-        except Exception:
-            logger.exception("Unexpected error while querying RAG service")
-            response_text = "Sorry, I am unable to answer right now. Please try again."
+        state_after = "ASK_NAME"
+        response_text = "Hi! What is your name?"
+        update_session(user, state=state_after)
 
+    if not response_text:
+        response_text = "Something went wrong. Please try again."
+
+    logger.info("State before=%s after=%s reply=%s", state_before, state_after, response_text)
     current_state = (get_or_create_session(user).get("state") or "NEW")
     create_log(user=user, state=current_state)
 
-    if send_whatsapp_reply:
-        asyncio.create_task(asyncio.to_thread(_send_whatsapp_message, user, response_text))
-
     return response_text
+
+
+async def _background_send_reply(user: str, text: str, reply: str) -> None:
+    final_reply = reply
+
+    if final_reply == "CALL_RAG":
+        try:
+            rag_result = await asyncio.to_thread(query_rag_service, text)
+            final_reply = str(rag_result.get("answer") or "")
+        except RuntimeError:
+            logger.exception("RAG request failed")
+            final_reply = "Sorry, I couldn't process your request right now."
+        except Exception:
+            logger.exception("Unexpected error while querying RAG service")
+            final_reply = "Sorry, I couldn't process your request right now."
+
+    if not final_reply:
+        final_reply = "Something went wrong. Please try again."
+
+    logger.info("Final reply for %s: %s", user, final_reply)
+    await asyncio.to_thread(_send_whatsapp_message, user, final_reply)
 
 
 async def handle_post(req: Request):
@@ -171,18 +202,29 @@ async def handle_post(req: Request):
     local_parsed = _parse_local_request(data)
     if local_parsed:
         user, text = local_parsed
-        response_text = await _process_user_message(user, text, send_whatsapp_reply=False)
+        response_text = _compute_reply_and_update_state(user, text)
+        if response_text == "CALL_RAG":
+            try:
+                rag_result = await asyncio.to_thread(query_rag_service, text)
+                response_text = str(rag_result.get("answer") or "")
+            except Exception:
+                response_text = "Sorry, I couldn't process your request right now."
+        if not response_text:
+            response_text = "Something went wrong. Please try again."
         return _message_response(user, response_text)
 
     if _is_whatsapp_event(data) and not _has_whatsapp_messages(data):
         logger.info("Ignoring non-message WhatsApp event")
-        return {"status": "ignored"}
+        return {"status": "accepted"}
 
-    parsed = _parse_whatsapp_request(data)
-    if not parsed:
-        logger.info("Webhook payload does not contain a valid message")
-        return {"status": "ignored"}
+    parsed_messages = _extract_whatsapp_messages(data)
+    if not parsed_messages:
+        logger.info("Webhook payload does not contain valid WhatsApp messages")
+        return {"status": "accepted"}
 
-    user, text = parsed
-    asyncio.create_task(_process_user_message(user, text, send_whatsapp_reply=True))
+    for user, text in parsed_messages:
+        logger.info("Received message from %s: %s", user, text)
+        reply = _compute_reply_and_update_state(user, text)
+        asyncio.create_task(_background_send_reply(user, text, reply))
+
     return {"status": "accepted"}

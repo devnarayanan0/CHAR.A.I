@@ -366,6 +366,56 @@ Swagger UI will be at:
 https://your-app.onrender.com/docs
 ```
 
+## 11. How To Deploy To Azure App Service (Linux)
+
+### Expected ZIP layout
+Azure should receive a ZIP whose root contains these items directly:
+- `app/`
+- `requirements.txt`
+- `main.py` optional, but fine to keep
+
+Do not ZIP the parent folder itself. The ZIP should not look like:
+- `CHAR.A.I/app/`
+
+It should look like:
+- `app/`
+- `requirements.txt`
+
+### App entrypoint
+Your FastAPI app is already exposed as `app` in [app/main.py](app/main.py#L26), so Azure should start:
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+If you prefer a wrapper script, use [startup.sh](startup.sh) and set the Azure Startup Command to:
+```bash
+bash startup.sh
+```
+
+### Required Azure settings
+Add this app setting so Azure routes traffic to the same port your app binds to:
+- `WEBSITES_PORT=8000`
+
+### Why Oryx may fall back to the default placeholder
+Common causes are:
+- `requirements.txt` is not at the ZIP root
+- the app was zipped with an extra parent folder
+- the startup command was not set, so Azure used the default site from `/opt/defaultsite`
+- FastAPI or Uvicorn were missing from `requirements.txt`
+
+### Files to keep in place
+Keep these files at the repo root for deployment:
+- `requirements.txt`
+- `main.py` 
+- `startup.sh` if you want a script-based startup command
+
+### Minimal Azure checklist
+1. ZIP the contents of the repo root, not the parent folder.
+2. Confirm `app/main.py` defines `app = FastAPI(...)`.
+3. Set the Startup Command to `uvicorn app.main:app --host 0.0.0.0 --port 8000` or `bash startup.sh`.
+4. Set `WEBSITES_PORT=8000`.
+5. Redeploy and check `/docs`.
+
 ## Production Notes
 
 ### About the `data/` folder on Render

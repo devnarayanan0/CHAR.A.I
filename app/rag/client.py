@@ -94,15 +94,20 @@ def query_rag_service(query: str) -> dict[str, Any]:
 
 
 def test_rag_query(query: str = "hello") -> dict[str, Any]:
-    base_url = _service_base_url()
-    query_url = f"{base_url}/query"
     payload_to_send = {"query": query}
-
     result: dict[str, Any] = {
-        "rag_service_url": base_url,
-        "query_url": query_url,
         "payload": payload_to_send,
     }
+
+    try:
+        base_url = _service_base_url()
+    except Exception as exc:
+        result["config_error"] = f"{type(exc).__name__}: {exc}"
+        return result
+
+    query_url = f"{base_url}/query"
+    result["rag_service_url"] = base_url
+    result["query_url"] = query_url
 
     try:
         health_response = requests.get(f"{base_url}/health", timeout=HEALTH_TIMEOUT_SECONDS)

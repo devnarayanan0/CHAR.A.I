@@ -20,8 +20,7 @@ NGROK_PID=$!
 echo "Waiting for ngrok tunnel..."
 NGROK_URL=""
 for _ in {1..30}; do
-  NGROK_JSON=$(curl -s http://127.0.0.1:4040/api/tunnels || true)
-  NGROK_URL=$(printf "%s" "$NGROK_JSON" | python -c 'import json, sys
+  NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | python -c 'import json, sys
 try:
     data = json.load(sys.stdin)
 except json.JSONDecodeError:

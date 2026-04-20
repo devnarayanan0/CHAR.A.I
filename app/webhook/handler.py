@@ -85,12 +85,25 @@ def _message_response(user: str, message: str) -> dict[str, str]:
     return {"user": user, "message": message}
 
 
+def normalize_phone(phone: str) -> str:
+    return "".join(filter(str.isdigit, phone))
+
+
 def send_whatsapp_message(user_phone: str, response_text: str) -> None:
     settings = get_settings()
     phone_number_id = settings.whatsapp_phone_number_id.strip()
     access_token = settings.whatsapp_access_token.strip()
     if not phone_number_id or not access_token:
-        logger.warning("WhatsApp outbound config missing; skipping outbound message")
+        logger.error(
+            "❌ WhatsApp send blocked | phone_id_present=%s access_token_present=%s",
+            bool(phone_number_id),
+            bool(access_token),
+        )
+        return
+
+    to = normalize_phone(user_phone)
+    if not to:
+        logger.error("❌ WhatsApp send blocked | normalized recipient phone is empty")
         return
 
     if not response_text:
@@ -99,7 +112,7 @@ def send_whatsapp_message(user_phone: str, response_text: str) -> None:
     url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
     payload = {
         "messaging_product": "whatsapp",
-        "to": user_phone,
+        "to": to,
         "type": "text",
         "text": {"body": response_text},
     }
@@ -109,16 +122,14 @@ def send_whatsapp_message(user_phone: str, response_text: str) -> None:
     }
 
     try:
-        print("Sending reply:", response_text)
-        logger.info("Sending reply to %s", user_phone)
+        logger.info("Preparing reply for %s", to)
         response = requests.post(url, headers=headers, json=payload, timeout=30)
-        logger.info("WhatsApp API response status=%s body=%s", response.status_code, response.text)
-        print("WHATSAPP STATUS:", response.status_code)
-        print("WHATSAPP RESPONSE:", response.text)
+        logger.info("📤 WhatsApp payload: %s", payload)
+        logger.info("📥 WhatsApp status: %s", response.status_code)
+        logger.info("📥 WhatsApp response: %s", response.text)
         response.raise_for_status()
-    except Exception as exc:
-        logger.exception("Failed to send outbound WhatsApp message")
-        print("WHATSAPP ERROR:", str(exc))
+    except Exception:
+        logger.exception("❌ WhatsApp send failed")
 
 
 def send_whatsapp_test_message(user_phone: str, response_text: str) -> None:
@@ -180,7 +191,7 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
 
 
 async def _background_send_reply(user: str, text: str, reply: str) -> None:
-    print("=== BACKGROUND START ===")
+    logger.info("=== BACKGROUND START ===")
     final_reply = reply
 
     if final_reply == "CALL_RAG":
@@ -194,9 +205,26 @@ async def _background_send_reply(user: str, text: str, reply: str) -> None:
     if not final_reply:
         final_reply = "Something went wrong. Please try again."
 
-    print("Sending reply:", final_reply)
+    logger.info("Preparing reply for %s", user)
     logger.info("Final reply for %s: %s", user, final_reply)
-    await asyncio.to_thread(send_whatsapp_message, user, final_reply)
+
+    async def safe_send() -> None:
+        try:
+            await asyncio.to_thread(send_whatsapp_message, user, final_reply)
+        except Exception:
+            logger.exception("❌ Background send failed")
+
+    await safe_send()
+
+
+def _schedule_safe_background_send(user: str, text: str, reply: str) -> None:
+    async def safe_send() -> None:
+        try:
+            await _background_send_reply(user, text, reply)
+        except Exception:
+            logger.exception("❌ Background send failed")
+
+    asyncio.create_task(safe_send())
 
 
 async def handle_post(req: Request):
@@ -206,11 +234,14 @@ async def handle_post(req: Request):
         logger.exception("Invalid JSON payload")
         return _message_response("unknown", "Sorry, I could not read your message. Please try again.")
 
-    print("=== WEBHOOK HIT ===")
-    print("RAW BODY:", data)
+    logger.info("=== WEBHOOK HIT ===")
+    logger.info("RAW BODY: %s", data)
+
+    if "entry" not in data:
+        return {"status": "ignored"}
 
     if _is_whatsapp_event(data) and not _has_whatsapp_messages(data):
-        print("No messages in payload")
+        logger.info("No messages in payload")
         logger.info("Ignoring non-message WhatsApp event")
         return {"status": "accepted"}
 
@@ -251,6 +282,6 @@ async def handle_post(req: Request):
             reply = "Something went wrong. Please try again."
         print("STEP 5: reply =", reply)
         print("STEP 6: scheduling background task")
-        asyncio.create_task(_background_send_reply(user, text, reply))
+        _schedule_safe_background_send(user, text, reply)
 
     return {"status": "accepted"}

@@ -33,13 +33,13 @@ def _get_supabase_client():
     try:
         from supabase import create_client
     except Exception as exc:
-        logger.error("DB ERROR: Supabase client unavailable: %s", exc)
+        print("DB ERROR:", str(exc))
         return None
 
     try:
         return create_client(settings.supabase_url, settings.supabase_key)
     except Exception as exc:
-        logger.error("DB ERROR: Supabase client initialization failed: %s", exc)
+        print("DB ERROR:", str(exc))
         return None
 
 
@@ -61,7 +61,7 @@ def get_user_by_phone(phone: str) -> dict | None:
             return rows[0]
         return None
     except Exception as exc:
-        logger.error("DB ERROR: failed to fetch user phone=%s error=%s", phone, exc)
+        print("DB ERROR:", str(exc))
         return None
 
 
@@ -77,7 +77,7 @@ def create_user(phone: str) -> dict | None:
             return rows[0]
         return None
     except Exception as exc:
-        logger.error("DB ERROR: failed to create user phone=%s error=%s", phone, exc)
+        print("DB ERROR:", str(exc))
         return None
 
 
@@ -90,7 +90,7 @@ def update_user_email(phone: str, email: str) -> bool:
         client.table("users").update({"email": email}).eq("phone", phone).execute()
         return True
     except Exception as exc:
-        logger.error("DB ERROR: failed to save email phone=%s error=%s", phone, exc)
+        print("DB ERROR:", str(exc))
         return False
 
 
@@ -103,7 +103,7 @@ def update_user_state(phone: str, state: str) -> bool:
         client.table("users").update({"state": state}).eq("phone", phone).execute()
         return True
     except Exception as exc:
-        logger.error("DB ERROR: failed to update state phone=%s state=%s error=%s", phone, state, exc)
+        print("DB ERROR:", str(exc))
         return False
 
 
@@ -116,7 +116,7 @@ def update_user_name(phone: str, name: str) -> bool:
         client.table("users").update({"name": name}).eq("phone", phone).execute()
         return True
     except Exception as exc:
-        logger.error("DB ERROR: failed to save name phone=%s error=%s", phone, exc)
+        print("DB ERROR:", str(exc))
         return False
 
 
@@ -144,7 +144,7 @@ def upsert_user(
                 return rows[0]
             return None
         except Exception as exc:
-            logger.error("DB ERROR: failed to upsert-create user phone=%s error=%s", phone, exc)
+            print("DB ERROR:", str(exc))
             return None
 
     updates: dict[str, str] = {}
@@ -161,7 +161,7 @@ def upsert_user(
             try:
                 client.table("users").update(updates).eq("phone", phone).execute()
             except Exception as exc:
-                logger.error("DB ERROR: failed to upsert-update user phone=%s error=%s", phone, exc)
+                print("DB ERROR:", str(exc))
 
     return get_user_by_phone(phone)
 
@@ -246,5 +246,5 @@ def insert_user_once(name: str, phone_number: str) -> None:
     if db_user is not None:
         return
 
-    logger.error("DB ERROR: unavailable, using memory fallback for user=%s", phone_number)
+    print("DB ERROR:", "unavailable, using memory fallback")
     _memory_update_session(phone_number, name=name)

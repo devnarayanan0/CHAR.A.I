@@ -19,7 +19,6 @@ from app.users.service import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -214,49 +213,53 @@ def _schedule_safe_background_send(user: str, text: str, reply: str) -> None:
 
 async def handle_post(req: Request):
     try:
-        data = await req.json()
-    except Exception:
-        logger.exception("Invalid JSON payload")
-        return _message_response("unknown", "Sorry, I could not read your message. Please try again.")
+        try:
+            data = await req.json()
+        except Exception:
+            logger.exception("Invalid JSON payload")
+            return _message_response("unknown", "Sorry, I could not read your message. Please try again.")
 
-    if "entry" not in data:
-        return {"status": "ignored"}
+        if "entry" not in data:
+            return {"status": "ignored"}
 
-    if _is_whatsapp_event(data) and not _has_whatsapp_messages(data):
+        if _is_whatsapp_event(data) and not _has_whatsapp_messages(data):
+            return {"status": "accepted"}
+
+        local_parsed = _parse_local_request(data)
+        if local_parsed:
+            user, text = local_parsed
+            logger.info("MSG from %s", user)
+            response_text = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
+            if response_text == "CALL_RAG":
+                try:
+                    rag_result = await asyncio.to_thread(query_rag_service, text)
+                    response_text = str(rag_result.get("answer") or "")
+                except Exception:
+                    logger.exception("RAG ERROR")
+                    response_text = "Sorry, I couldn't process your request right now."
+            if not response_text:
+                response_text = "Something went wrong. Please try again."
+            return _message_response(user, response_text)
+
+        parsed_messages = _extract_whatsapp_messages(data)
+        if not parsed_messages:
+            return {"status": "accepted"}
+
+        for user, text in parsed_messages:
+            logger.info("MSG from %s", user)
+            reply = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
+            if not reply:
+                reply = "Something went wrong. Please try again."
+            if reply == "CALL_RAG":
+                try:
+                    rag_result = await asyncio.to_thread(query_rag_service, text)
+                    reply = str(rag_result.get("answer") or "")
+                except Exception:
+                    logger.exception("RAG ERROR")
+                    reply = "Sorry, I couldn't process your request right now."
+            _schedule_safe_background_send(user, text, reply)
+
         return {"status": "accepted"}
-
-    local_parsed = _parse_local_request(data)
-    if local_parsed:
-        user, text = local_parsed
-        logger.info("MSG from %s", user)
-        response_text = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
-        if response_text == "CALL_RAG":
-            try:
-                rag_result = await asyncio.to_thread(query_rag_service, text)
-                response_text = str(rag_result.get("answer") or "")
-            except Exception:
-                logger.exception("RAG ERROR")
-                response_text = "Sorry, I couldn't process your request right now."
-        if not response_text:
-            response_text = "Something went wrong. Please try again."
-        return _message_response(user, response_text)
-
-    parsed_messages = _extract_whatsapp_messages(data)
-    if not parsed_messages:
-        return {"status": "accepted"}
-
-    for user, text in parsed_messages:
-        logger.info("MSG from %s", user)
-        reply = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
-        if not reply:
-            reply = "Something went wrong. Please try again."
-        if reply == "CALL_RAG":
-            try:
-                rag_result = await asyncio.to_thread(query_rag_service, text)
-                reply = str(rag_result.get("answer") or "")
-            except Exception:
-                logger.exception("RAG ERROR")
-                reply = "Sorry, I couldn't process your request right now."
-        _schedule_safe_background_send(user, text, reply)
-
-    return {"status": "accepted"}
+    except Exception as e:
+        print("CRASH:", str(e))
+        return {"status": "error"}

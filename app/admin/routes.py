@@ -41,8 +41,8 @@ def _fetch_users_from_supabase() -> list[dict[str, str]]:
                 }
             )
         return users
-    except Exception:
-        logger.exception("Failed to fetch users from Supabase")
+    except Exception as exc:
+        print("DB ERROR:", str(exc))
         return []
 
 
@@ -98,7 +98,7 @@ async def admin_users():
 
 @router.post("/ingest")
 async def ingest_documents():
-    logger.info("=== /admin/ingest ROUTE HIT ===\")
+    logger.info("=== /admin/ingest ROUTE HIT ===")
     logger.info("🚀 Starting ingestion from admin panel...")
     
     try:

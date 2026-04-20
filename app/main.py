@@ -10,7 +10,14 @@ from app.admin.routes import router as admin_router
 from app.config.settings import get_settings
 from app.webhook.handler import handle_get, handle_post, send_whatsapp_message
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.ERROR,
+    format="%(levelname)s: %(message)s",
+)
+logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpcore").setLevel(logging.ERROR)
+logging.getLogger("urllib3").setLevel(logging.ERROR)
+logging.getLogger("uvicorn.access").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 settings = get_settings()
 static_dir = Path(__file__).parent / "static"
@@ -18,13 +25,15 @@ static_dir = Path(__file__).parent / "static"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    if not settings.rag_service_url:
+        logger.error("RAG_SERVICE_URL missing")
+
     if not settings.whatsapp_access_token:
-        logger.error("❌ WHATSAPP_ACCESS_TOKEN missing")
+        logger.error("WHATSAPP_ACCESS_TOKEN missing")
 
     if not settings.whatsapp_phone_number_id:
-        logger.error("❌ WHATSAPP_PHONE_NUMBER_ID missing")
+        logger.error("WHATSAPP_PHONE_NUMBER_ID missing")
 
-    logger.info("Startup complete")
     yield
 
 

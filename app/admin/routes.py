@@ -98,15 +98,25 @@ async def admin_users():
 
 @router.post("/ingest")
 async def ingest_documents():
+    logger.info("=== /admin/ingest ROUTE HIT ===\")
+    logger.info("🚀 Starting ingestion from admin panel...")
+    
     try:
+        logger.info("📞 Calling RAG ingestion service...")
         result = await asyncio.to_thread(ingest_rag_service)
     except HTTPException:
+        logger.exception("❌ HTTPException during RAG ingestion")
         raise
     except RuntimeError as exc:
-        logger.exception("RAG ingestion request failed")
+        logger.exception("❌ RAG ingestion request failed: %s", str(exc))
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Unexpected RAG ingestion failure")
+        logger.exception("❌ Unexpected RAG ingestion failure")
         raise HTTPException(status_code=500, detail="Local ingestion failed") from exc
 
+    logger.info("✓ Ingestion complete | processed=%d removed=%d skipped=%d uploaded=%d",
+                result.get("processed_files", 0),
+                result.get("removed_files", 0),
+                result.get("skipped_files", 0),
+                result.get("uploaded_chunks", 0))
     return result

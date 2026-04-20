@@ -33,13 +33,13 @@ def _get_supabase_client():
     try:
         from supabase import create_client
     except Exception as exc:
-        logger.warning("Supabase client unavailable: %s", exc)
+        logger.error("DB ERROR: Supabase client unavailable: %s", exc)
         return None
 
     try:
         return create_client(settings.supabase_url, settings.supabase_key)
     except Exception as exc:
-        logger.warning("Supabase client initialization failed: %s", exc)
+        logger.error("DB ERROR: Supabase client initialization failed: %s", exc)
         return None
 
 
@@ -58,17 +58,26 @@ def get_user_by_phone(phone: str) -> dict | None:
         )
         rows = getattr(result, "data", None) or []
         if rows:
-            logger.info("DB: user found phone=%s", phone)
             return rows[0]
         return None
     except Exception as exc:
-        logger.warning("DB: failed to fetch user phone=%s error=%s", phone, exc)
+        logger.error("DB ERROR: failed to fetch user phone=%s error=%s", phone, exc)
         return None
 
 
 def create_user(phone: str) -> dict | None:
     client = _get_supabase_client()
     if client is None:
+        return None
+
+    try:
+        result = client.table("users").insert({"id": str(uuid4()), "phone": phone, "state": "NEW"}).execute()
+        rows = getattr(result, "data", None) or []
+        if rows:
+            return rows[0]
+        return None
+    except Exception as exc:
+        logger.error("DB ERROR: failed to create user phone=%s error=%s", phone, exc)
         return None
 
 
@@ -79,23 +88,10 @@ def update_user_email(phone: str, email: str) -> bool:
 
     try:
         client.table("users").update({"email": email}).eq("phone", phone).execute()
-        logger.info("DB: email saved phone=%s", phone)
         return True
     except Exception as exc:
-        logger.warning("DB: failed to save email phone=%s error=%s", phone, exc)
+        logger.error("DB ERROR: failed to save email phone=%s error=%s", phone, exc)
         return False
-
-    try:
-        result = client.table("users").insert({"id": str(uuid4()), "phone": phone, "state": "NEW"}).execute()
-        rows = getattr(result, "data", None) or []
-        if rows:
-            logger.info("DB: user created phone=%s", phone)
-            return rows[0]
-        logger.info("DB: user create returned empty rows phone=%s", phone)
-        return None
-    except Exception as exc:
-        logger.warning("DB: failed to create user phone=%s error=%s", phone, exc)
-        return None
 
 
 def update_user_state(phone: str, state: str) -> bool:
@@ -105,10 +101,9 @@ def update_user_state(phone: str, state: str) -> bool:
 
     try:
         client.table("users").update({"state": state}).eq("phone", phone).execute()
-        logger.info("DB: state updated phone=%s state=%s", phone, state)
         return True
     except Exception as exc:
-        logger.warning("DB: failed to update state phone=%s state=%s error=%s", phone, state, exc)
+        logger.error("DB ERROR: failed to update state phone=%s state=%s error=%s", phone, state, exc)
         return False
 
 
@@ -119,10 +114,9 @@ def update_user_name(phone: str, name: str) -> bool:
 
     try:
         client.table("users").update({"name": name}).eq("phone", phone).execute()
-        logger.info("DB: name saved phone=%s", phone)
         return True
     except Exception as exc:
-        logger.warning("DB: failed to save name phone=%s error=%s", phone, exc)
+        logger.error("DB ERROR: failed to save name phone=%s error=%s", phone, exc)
         return False
 
 
@@ -147,11 +141,10 @@ def upsert_user(
             result = client.table("users").insert(payload).execute()
             rows = getattr(result, "data", None) or []
             if rows:
-                logger.info("DB: user created phone=%s", phone)
                 return rows[0]
             return None
         except Exception as exc:
-            logger.warning("DB: failed to upsert-create user phone=%s error=%s", phone, exc)
+            logger.error("DB ERROR: failed to upsert-create user phone=%s error=%s", phone, exc)
             return None
 
     updates: dict[str, str] = {}
@@ -167,14 +160,8 @@ def upsert_user(
         if client is not None:
             try:
                 client.table("users").update(updates).eq("phone", phone).execute()
-                if "name" in updates:
-                    logger.info("DB: name saved phone=%s", phone)
-                if "email" in updates:
-                    logger.info("DB: email saved phone=%s", phone)
-                if "state" in updates:
-                    logger.info("DB: state updated phone=%s state=%s", phone, updates["state"])
             except Exception as exc:
-                logger.warning("DB: failed to upsert-update user phone=%s error=%s", phone, exc)
+                logger.error("DB ERROR: failed to upsert-update user phone=%s error=%s", phone, exc)
 
     return get_user_by_phone(phone)
 
@@ -210,9 +197,7 @@ def get_or_create_session(phone_number: str) -> dict[str, str | None]:
     db_user = get_user_by_phone(phone_number)
     if db_user is None:
         db_user = create_user(phone_number)
-        if db_user is not None:
-            logger.info("DB: user created phone=%s", phone_number)
-        else:
+        if db_user is None:
             return _memory_get_or_create_session(phone_number)
 
     session = {
@@ -261,5 +246,5 @@ def insert_user_once(name: str, phone_number: str) -> None:
     if db_user is not None:
         return
 
-    logger.warning("DB unavailable, using memory fallback for user=%s", phone_number)
+    logger.error("DB ERROR: unavailable, using memory fallback for user=%s", phone_number)
     _memory_update_session(phone_number, name=name)

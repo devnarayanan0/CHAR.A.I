@@ -19,6 +19,7 @@ from app.users.service import (
 )
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -28,14 +29,11 @@ async def handle_get(req: Request):
     token = params.get("hub.verify_token")
     challenge = params.get("hub.challenge")
 
-    logger.info("Received webhook verification request mode=%s", mode)
-
     settings = get_settings()
     if mode == "subscribe" and token == settings.whatsapp_verify_token:
-        logger.info("Webhook verification succeeded")
         return PlainTextResponse(content=challenge or "")
 
-    logger.warning("Webhook verification failed")
+    logger.error("Webhook verification failed")
     return PlainTextResponse(content="verification failed", status_code=403)
 
 
@@ -94,16 +92,12 @@ def send_whatsapp_message(user_phone: str, response_text: str) -> None:
     phone_number_id = settings.whatsapp_phone_number_id.strip()
     access_token = settings.whatsapp_access_token.strip()
     if not phone_number_id or not access_token:
-        logger.error(
-            "❌ WhatsApp send blocked | phone_id_present=%s access_token_present=%s",
-            bool(phone_number_id),
-            bool(access_token),
-        )
+        logger.error("WHATSAPP SEND FAILED: missing credentials")
         return
 
     to = normalize_phone(user_phone)
     if not to:
-        logger.error("❌ WhatsApp send blocked | normalized recipient phone is empty")
+        logger.error("WHATSAPP SEND FAILED: invalid recipient phone")
         return
 
     if not response_text:
@@ -122,14 +116,10 @@ def send_whatsapp_message(user_phone: str, response_text: str) -> None:
     }
 
     try:
-        logger.info("Preparing reply for %s", to)
         response = requests.post(url, headers=headers, json=payload, timeout=30)
-        logger.info("📤 WhatsApp payload: %s", payload)
-        logger.info("📥 WhatsApp status: %s", response.status_code)
-        logger.info("📥 WhatsApp response: %s", response.text)
         response.raise_for_status()
     except Exception:
-        logger.exception("❌ WhatsApp send failed")
+        logger.exception("WHATSAPP SEND FAILED")
 
 
 def send_whatsapp_test_message(user_phone: str, response_text: str) -> None:
@@ -183,7 +173,6 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
     if not response_text:
         response_text = "Something went wrong. Please try again."
 
-    logger.info("State before=%s after=%s reply=%s", state_before, state_after, response_text)
     current_state = (get_or_create_session(user).get("state") or "NEW")
     create_log(user=user, state=current_state)
 
@@ -191,7 +180,6 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
 
 
 async def _background_send_reply(user: str, text: str, reply: str) -> None:
-    logger.info("=== BACKGROUND START ===")
     final_reply = reply
 
     if final_reply == "CALL_RAG":
@@ -199,20 +187,17 @@ async def _background_send_reply(user: str, text: str, reply: str) -> None:
             rag_result = await asyncio.to_thread(query_rag_service, text)
             final_reply = str(rag_result.get("answer") or "")
         except Exception:
-            logger.exception("RAG request failed")
+            logger.exception("RAG ERROR")
             final_reply = "Sorry, I couldn't process your request right now."
 
     if not final_reply:
         final_reply = "Something went wrong. Please try again."
 
-    logger.info("Preparing reply for %s", user)
-    logger.info("Final reply for %s: %s", user, final_reply)
-
     async def safe_send() -> None:
         try:
             await asyncio.to_thread(send_whatsapp_message, user, final_reply)
         except Exception:
-            logger.exception("❌ Background send failed")
+            logger.exception("WHATSAPP SEND FAILED")
 
     await safe_send()
 
@@ -222,7 +207,7 @@ def _schedule_safe_background_send(user: str, text: str, reply: str) -> None:
         try:
             await _background_send_reply(user, text, reply)
         except Exception:
-            logger.exception("❌ Background send failed")
+            logger.exception("WHATSAPP SEND FAILED")
 
     asyncio.create_task(safe_send())
 
@@ -234,32 +219,23 @@ async def handle_post(req: Request):
         logger.exception("Invalid JSON payload")
         return _message_response("unknown", "Sorry, I could not read your message. Please try again.")
 
-    logger.info("=== WEBHOOK HIT ===")
-    logger.info("RAW BODY: %s", data)
-
     if "entry" not in data:
         return {"status": "ignored"}
 
     if _is_whatsapp_event(data) and not _has_whatsapp_messages(data):
-        logger.info("No messages in payload")
-        logger.info("Ignoring non-message WhatsApp event")
         return {"status": "accepted"}
 
     local_parsed = _parse_local_request(data)
     if local_parsed:
         user, text = local_parsed
-        print("STEP 1: parsing payload")
-        print("STEP 2: sender =", user)
-        print("STEP 3: text =", text)
-        state_before = (await asyncio.to_thread(get_or_create_session, user)).get("state") or "NEW"
-        print("STEP 4: state before =", state_before)
+        logger.info("MSG from %s", user)
         response_text = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
-        print("STEP 5: reply =", response_text)
         if response_text == "CALL_RAG":
             try:
                 rag_result = await asyncio.to_thread(query_rag_service, text)
                 response_text = str(rag_result.get("answer") or "")
             except Exception:
+                logger.exception("RAG ERROR")
                 response_text = "Sorry, I couldn't process your request right now."
         if not response_text:
             response_text = "Something went wrong. Please try again."
@@ -267,21 +243,20 @@ async def handle_post(req: Request):
 
     parsed_messages = _extract_whatsapp_messages(data)
     if not parsed_messages:
-        logger.info("Webhook payload does not contain valid WhatsApp messages")
         return {"status": "accepted"}
 
     for user, text in parsed_messages:
-        print("STEP 1: parsing payload")
-        print("STEP 2: sender =", user)
-        print("STEP 3: text =", text)
-        state_before = (await asyncio.to_thread(get_or_create_session, user)).get("state") or "NEW"
-        print("STEP 4: state before =", state_before)
-        logger.info("Received message from %s: %s", user, text)
+        logger.info("MSG from %s", user)
         reply = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
         if not reply:
             reply = "Something went wrong. Please try again."
-        print("STEP 5: reply =", reply)
-        print("STEP 6: scheduling background task")
+        if reply == "CALL_RAG":
+            try:
+                rag_result = await asyncio.to_thread(query_rag_service, text)
+                reply = str(rag_result.get("answer") or "")
+            except Exception:
+                logger.exception("RAG ERROR")
+                reply = "Sorry, I couldn't process your request right now."
         _schedule_safe_background_send(user, text, reply)
 
     return {"status": "accepted"}

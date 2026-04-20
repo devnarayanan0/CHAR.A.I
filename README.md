@@ -63,6 +63,21 @@ INFO:app.main:Starting local document ingestion
 INFO:app.main:Local document ingestion complete: {...}
 ```
 
+### Step 3: Start local RAG with Cloudflare Tunnel
+```bash
+./start.sh
+```
+
+This command:
+- starts the local RAG service on port `8001`
+- starts Cloudflare Tunnel using `cloudflared tunnel run rag-tunnel`
+- prints the public URL to use from Railway
+
+Set this in Railway:
+```text
+RAG_SERVICE_URL=https://rag.yourdomain.com
+```
+
 ## 3. What Opens Where
 
 ### Base API

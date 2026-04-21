@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.png" alt="CHAR.AI" width="90" height="90" />
+<img src="asserts/3.png" alt="CHAR.AI" width="90" height="90" />
 
 # CHAR.AI
 
@@ -22,7 +22,7 @@
 ## System Architecture
 
 <div align="center">
-  <img src="assets/system-design.png" width="90%" alt="System Design" />
+  <img src="asserts/2.png" width="90%" alt="System Design" />
 </div>
 
 ---

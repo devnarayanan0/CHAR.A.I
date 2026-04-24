@@ -36,7 +36,7 @@ WhatsApp User
 Meta Cloud API  ──  Webhook delivery (HTTP POST)
      │
      ▼
-Azure Load Balancer
+Load Balancer (NGINX)
      │
      ▼
 FastAPI Backend  ──  HMAC validation · event filtering · session routing

@@ -35,6 +35,8 @@ _WELCOME_TEXT = (
     "Enter Access Code!"
 )
 
+_REGISTRATION_COMPLETE = "__REGISTRATION_COMPLETE__"
+
 
 async def handle_get(req: Request):
     params = req.query_params
@@ -199,7 +201,7 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
                 )
             else:
                 state_after = "ASK_NAME"
-                response_text = "New access detected. Please enter your name."
+                response_text = "Please enter your name."
                 update_session(user, state=state_after, access_code=access_code_int)
 
     elif state_before == "ASK_NAME":
@@ -228,7 +230,7 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
                 return response_text
 
             state_after = "ACTIVE"
-            response_text = "Registration complete. You can now start using the system."
+            response_text = _REGISTRATION_COMPLETE
             update_session(
                 user,
                 state=state_after,
@@ -252,6 +254,28 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
         response_text = "Something went wrong. Please try again."
 
     return response_text
+
+
+async def _post_registration_rag_check(user: str) -> str:
+    try:
+        rag_result = await asyncio.to_thread(query_rag_service, "hello")
+    except Exception:
+        logger.error("RAG unavailable → fallback triggered")
+        return FALLBACK_MESSAGE
+
+    answer = str(rag_result.get("answer", FALLBACK_MESSAGE))
+    if answer == FALLBACK_MESSAGE:
+        logger.error("RAG unavailable → fallback triggered")
+        return FALLBACK_MESSAGE
+
+    return ""
+
+
+async def _send_registration_welcome_and_check(user: str) -> None:
+    await asyncio.to_thread(send_whatsapp_message, user, "Welcome to CHAR.A.I !")
+    fallback_reply = await _post_registration_rag_check(user)
+    if fallback_reply:
+        await asyncio.to_thread(send_whatsapp_message, user, fallback_reply)
 
 
 async def _background_send_reply(user: str, text: str, reply: str) -> None:
@@ -305,6 +329,9 @@ async def handle_post(req: Request):
         if local_parsed:
             user, text = local_parsed
             response_text = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
+            if response_text == _REGISTRATION_COMPLETE:
+                fallback_reply = await _post_registration_rag_check(user)
+                response_text = fallback_reply or "Welcome to CHAR.A.I !"
             if response_text == "CALL_RAG":
                 try:
                     rag_result = await asyncio.to_thread(query_rag_service, text)
@@ -322,6 +349,9 @@ async def handle_post(req: Request):
 
         for user, text in parsed_messages:
             reply = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
+            if reply == _REGISTRATION_COMPLETE:
+                asyncio.create_task(_send_registration_welcome_and_check(user))
+                continue
             if not reply:
                 reply = FALLBACK_MESSAGE
             if reply == "CALL_RAG":

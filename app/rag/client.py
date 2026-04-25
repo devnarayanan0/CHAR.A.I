@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 QUERY_TIMEOUT_SECONDS = 15
 INGEST_TIMEOUT_SECONDS = 30
 FALLBACK_MESSAGE = (
-    "🚫 Access denied. This service is restricted to authorized users. "
+    "🚫 This service is restricted to authorized users. "
     "Please contact the system administrator to request access."
 )
 

@@ -13,13 +13,27 @@ from app.admin.log_store import create_log
 from app.config.settings import get_settings
 from app.rag.client import query_rag_service
 from app.users.service import (
+    get_user_by_access_code,
     get_or_create_session,
     normalize_user_id,
     update_session,
 )
 
 logger = logging.getLogger(__name__)
-_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_ACCESS_CODE_PATTERN = re.compile(r"^\d{5}$")
+_HELP_COMMANDS = {"help", "/help", ".help"}
+
+_HELP_TEXT = (
+    "Available Commands:\n"
+    "- help -> show this message\n"
+    "- ask -> ask questions to the AI system\n\n"
+    "Note:\n"
+    "Access is restricted to authorized users."
+)
+
+_WELCOME_TEXT = (
+    "Enter your 5-digit access code to continue."
+)
 
 
 async def handle_get(req: Request):
@@ -75,7 +89,27 @@ def _has_whatsapp_messages(data: dict) -> bool:
 
 
 def _is_valid_email(value: str) -> bool:
-    return bool(_EMAIL_PATTERN.fullmatch(value.strip()))
+    return "@" in value.strip()
+
+
+def _is_valid_access_code(value: str) -> bool:
+    return bool(_ACCESS_CODE_PATTERN.fullmatch(value.strip()))
+
+
+def _to_access_code_int(value: str | int | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+
+    try:
+        return int(cleaned)
+    except ValueError:
+        return None
 
 
 def _message_response(user: str, message: str) -> dict[str, str]:
@@ -128,36 +162,84 @@ def send_whatsapp_test_message(user_phone: str, response_text: str) -> None:
 def _compute_reply_and_update_state(user: str, text: str) -> str:
     session = get_or_create_session(user)
     state_before = session.get("state") or "NEW"
+    clean_text = text.strip()
+    normalized_text = clean_text.lower()
+
+    if normalized_text in _HELP_COMMANDS:
+        create_log(user=user, state=str(state_before))
+        return _HELP_TEXT
+
     response_text = ""
     state_after = state_before
 
     if state_before == "NEW":
-        state_after = "ASK_NAME"
-        response_text = "Hi! What is your name?"
+        state_after = "ASK_ACCESS_CODE"
+        response_text = _WELCOME_TEXT
         update_session(user, state=state_after)
 
+    elif state_before == "ASK_ACCESS_CODE":
+        access_code = clean_text
+        if not _is_valid_access_code(access_code):
+            state_after = "ASK_ACCESS_CODE"
+            response_text = "Invalid access code format. Please enter a 5-digit code."
+            update_session(user, state=state_after)
+        else:
+            access_code_int = _to_access_code_int(access_code)
+            existing_user = get_user_by_access_code(access_code_int) if access_code_int is not None else None
+            if existing_user is not None:
+                state_after = "ACTIVE"
+                existing_name = str(existing_user.get("name") or "User")
+                response_text = f"Welcome back, {existing_name}. You may continue."
+                update_session(
+                    user,
+                    state=state_after,
+                    name=(str(existing_user.get("name")) if existing_user.get("name") else None),
+                    email=(str(existing_user.get("email")) if existing_user.get("email") else None),
+                    access_code=access_code_int,
+                    persist_to_db=True,
+                )
+            else:
+                state_after = "ASK_NAME"
+                response_text = "New access detected. Please enter your name."
+                update_session(user, state=state_after, access_code=access_code_int)
+
     elif state_before == "ASK_NAME":
-        name = text.strip()
+        name = clean_text
         if name:
             state_after = "ASK_EMAIL"
-            response_text = "Enter your email"
+            response_text = "Please enter your email address."
             update_session(user, state=state_after, name=name)
         else:
             state_after = "ASK_NAME"
-            response_text = "Something went wrong. Please try again."
+            response_text = "Invalid input. Please try again."
             update_session(user, state=state_after)
 
     elif state_before == "ASK_EMAIL":
-        email = text.strip()
+        email = clean_text
         if not _is_valid_email(email):
             state_after = "ASK_EMAIL"
-            response_text = "Invalid email, try again"
+            response_text = "Invalid input. Please try again."
             update_session(user, state=state_after)
         else:
-            name = str(session.get("name") or "User")
+            registration_access_code = _to_access_code_int(session.get("access_code"))
+            if registration_access_code is None:
+                state_after = "ASK_ACCESS_CODE"
+                response_text = "Enter your 5-digit access code to continue."
+                update_session(user, state=state_after)
+                current_state = (get_or_create_session(user).get("state") or "NEW")
+                create_log(user=user, state=current_state)
+                return response_text
+
             state_after = "ACTIVE"
-            response_text = f"Welcome {name}!"
-            update_session(user, state=state_after, email=email)
+            response_text = "Registration complete. You can now start using the system."
+            update_session(
+                user,
+                state=state_after,
+                name=(str(session.get("name")) if session.get("name") else None),
+                email=email,
+                access_code=registration_access_code,
+                persist_to_db=True,
+            )
 
     elif state_before == "ACTIVE":
         state_after = "ACTIVE"
@@ -165,8 +247,8 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
         update_session(user, state=state_after)
 
     else:
-        state_after = "ASK_NAME"
-        response_text = "Hi! What is your name?"
+        state_after = "ASK_ACCESS_CODE"
+        response_text = _WELCOME_TEXT
         update_session(user, state=state_after)
 
     if not response_text:
@@ -186,8 +268,8 @@ async def _background_send_reply(user: str, text: str, reply: str) -> None:
             rag_result = await asyncio.to_thread(query_rag_service, text)
             final_reply = str(rag_result.get("answer") or "")
         except Exception:
-            logger.exception("RAG ERROR")
-            final_reply = "Sorry, I couldn't process your request right now."
+            logger.error("RAG unavailable")
+            final_reply = "🚫 Access denied. This service is restricted to authorized users. Please contact the system administrator to request access."
 
     if not final_reply:
         final_reply = "Something went wrong. Please try again."
@@ -228,15 +310,14 @@ async def handle_post(req: Request):
         local_parsed = _parse_local_request(data)
         if local_parsed:
             user, text = local_parsed
-            logger.info("MSG from %s", user)
             response_text = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
             if response_text == "CALL_RAG":
                 try:
                     rag_result = await asyncio.to_thread(query_rag_service, text)
                     response_text = str(rag_result.get("answer") or "")
                 except Exception:
-                    logger.exception("RAG ERROR")
-                    response_text = "Sorry, I couldn't process your request right now."
+                    logger.error("RAG unavailable")
+                    response_text = "🚫 Access denied. This service is restricted to authorized users. Please contact the system administrator to request access."
             if not response_text:
                 response_text = "Something went wrong. Please try again."
             return _message_response(user, response_text)
@@ -246,7 +327,6 @@ async def handle_post(req: Request):
             return {"status": "accepted"}
 
         for user, text in parsed_messages:
-            logger.info("MSG from %s", user)
             reply = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
             if not reply:
                 reply = "Something went wrong. Please try again."
@@ -255,8 +335,8 @@ async def handle_post(req: Request):
                     rag_result = await asyncio.to_thread(query_rag_service, text)
                     reply = str(rag_result.get("answer") or "")
                 except Exception:
-                    logger.exception("RAG ERROR")
-                    reply = "Sorry, I couldn't process your request right now."
+                    logger.error("RAG unavailable")
+                    reply = "🚫 Access denied. This service is restricted to authorized users. Please contact the system administrator to request access."
             _schedule_safe_background_send(user, text, reply)
 
         return {"status": "accepted"}

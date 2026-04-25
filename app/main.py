@@ -34,6 +34,12 @@ async def lifespan(_: FastAPI):
     if not settings.whatsapp_phone_number_id:
         logger.error("WHATSAPP_PHONE_NUMBER_ID missing")
 
+    if not settings.supabase_url:
+        logger.error("SUPABASE_URL missing")
+
+    if not settings.supabase_key:
+        logger.error("SUPABASE_KEY missing")
+
     yield
 
 

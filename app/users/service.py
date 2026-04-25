@@ -169,35 +169,9 @@ def upsert_user(
     access_code: int | None = None,
     state: str | None = None,
 ) -> dict | None:
-    if access_code is not None:
-        existing = get_user_by_access_code(access_code)
-    else:
-        existing = get_user_by_phone(phone)
+    existing = get_user_by_access_code(access_code) if access_code is not None else None
 
     if existing is None:
-        existing_by_phone = get_user_by_phone(phone)
-        if existing_by_phone is not None:
-            updates: dict[str, str] = {}
-            if name is not None:
-                updates["name"] = name
-            if email is not None:
-                updates["email"] = email
-            if access_code is not None:
-                updates["access_code"] = access_code
-            if state is not None:
-                updates["state"] = state
-
-            if updates:
-                client = _get_supabase_client()
-                if client is not None:
-                    try:
-                        client.table("users").update(updates).eq("phone", phone).execute()
-                    except Exception as exc:
-                        logger.error("DB ERROR: %s", str(exc))
-            if access_code is not None:
-                return get_user_by_access_code(access_code)
-            return get_user_by_phone(phone)
-
         payload: dict[str, str | int] = {"id": str(uuid4()), "phone": phone, "state": state or "NEW"}
         if name:
             payload["name"] = name
@@ -233,16 +207,13 @@ def upsert_user(
         client = _get_supabase_client()
         if client is not None:
             try:
-                if access_code is not None:
-                    client.table("users").update(updates).eq("access_code", access_code).execute()
-                else:
-                    client.table("users").update(updates).eq("phone", phone).execute()
+                client.table("users").update(updates).eq("access_code", access_code).execute()
             except Exception as exc:
                 logger.error("DB ERROR: %s", str(exc))
 
     if access_code is not None:
         return get_user_by_access_code(access_code)
-    return get_user_by_phone(phone)
+    return None
 
 
 def _memory_get_or_create_session(phone_number: str) -> dict[str, str | int | None]:
@@ -251,6 +222,13 @@ def _memory_get_or_create_session(phone_number: str) -> dict[str, str | int | No
         if session is None:
             session = {"state": "NEW", "name": None, "email": None, "access_code": None}
             _SESSIONS[phone_number] = session
+        return dict(session)
+
+
+def reset_session(phone_number: str) -> dict[str, str | int | None]:
+    with _SESSION_LOCK:
+        session = {"state": "ASK_ACCESS_CODE", "name": None, "email": None, "access_code": None}
+        _SESSIONS[phone_number] = session
         return dict(session)
 
 

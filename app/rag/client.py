@@ -11,11 +11,15 @@ from app.config.settings import get_settings
 logger = logging.getLogger(__name__)
 QUERY_TIMEOUT_SECONDS = 15
 INGEST_TIMEOUT_SECONDS = 30
+FALLBACK_MESSAGE = (
+    "🚫 Access denied. This service is restricted to authorized users. "
+    "Please contact the system administrator to request access."
+)
 
 
 def _rag_unavailable_response() -> dict[str, Any]:
     return {
-        "answer": "RAG service unavailable",
+        "answer": FALLBACK_MESSAGE,
         "context": [],
     }
 
@@ -49,7 +53,7 @@ def query_rag_service(query: str) -> dict[str, Any]:
     try:
         base_url = _service_base_url()
     except Exception:
-        logger.error("RAG ERROR: RAG_SERVICE_URL configuration error")
+        logger.error("RAG unavailable → fallback triggered")
         return _rag_unavailable_response()
 
     query_url = f"{base_url}/query"
@@ -59,10 +63,10 @@ def query_rag_service(query: str) -> dict[str, Any]:
         health = requests.get(f"{base_url}/health", timeout=5)
         health.raise_for_status()
     except requests.Timeout:
-        logger.error("RAG ERROR: timeout on /health")
+        logger.error("RAG unavailable → fallback triggered")
         return _rag_unavailable_response()
     except requests.RequestException as e:
-        logger.error("RAG ERROR: unreachable: %s", e)
+        logger.error("RAG unavailable → fallback triggered")
         return _rag_unavailable_response()
 
     try:
@@ -70,32 +74,26 @@ def query_rag_service(query: str) -> dict[str, Any]:
         response.raise_for_status()
         payload = response.json()
     except requests.Timeout:
-        logger.error("RAG ERROR: timeout on /query")
+        logger.error("RAG unavailable → fallback triggered")
         return _rag_unavailable_response()
     except requests.HTTPError as exc:
-        status = exc.response.status_code if exc.response is not None else None
-        if status == 404:
-            logger.error("RAG ERROR: wrong endpoint: %s", query_url)
-        elif status == 500:
-            logger.error("RAG ERROR: internal error")
-        else:
-            logger.error("RAG ERROR: query failed with HTTP %s", status)
+        logger.error("RAG unavailable → fallback triggered")
         return _rag_unavailable_response()
     except requests.RequestException as exc:
-        logger.error("RAG ERROR: unreachable: %s", exc)
+        logger.error("RAG unavailable → fallback triggered")
         return _rag_unavailable_response()
     except ValueError:
-        logger.error("RAG ERROR: non-JSON response")
+        logger.error("RAG unavailable → fallback triggered")
         return _rag_unavailable_response()
 
     if not isinstance(payload, dict):
-        logger.error("RAG ERROR: response is not a JSON object")
+        logger.error("RAG unavailable → fallback triggered")
         return _rag_unavailable_response()
     if "answer" not in payload or "context" not in payload:
-        logger.error("RAG ERROR: missing answer/context keys")
+        logger.error("RAG unavailable → fallback triggered")
         return _rag_unavailable_response()
     if not isinstance(payload.get("context"), list):
-        logger.error("RAG ERROR: context is not a list")
+        logger.error("RAG unavailable → fallback triggered")
         return _rag_unavailable_response()
     return payload
 

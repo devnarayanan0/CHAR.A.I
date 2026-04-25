@@ -9,18 +9,18 @@ import requests
 from fastapi import Request
 from fastapi.responses import PlainTextResponse
 
-from app.admin.log_store import create_log
 from app.config.settings import get_settings
-from app.rag.client import query_rag_service
+from app.rag.client import FALLBACK_MESSAGE, query_rag_service
 from app.users.service import (
     get_user_by_access_code,
     get_or_create_session,
     normalize_user_id,
+    reset_session,
     update_session,
 )
 
 logger = logging.getLogger(__name__)
-_ACCESS_CODE_PATTERN = re.compile(r"^\d{5}$")
+_ACCESS_CODE_PATTERN = re.compile(r"^\d{6}$")
 _HELP_COMMANDS = {"help", "/help", ".help"}
 
 _HELP_TEXT = (
@@ -32,7 +32,7 @@ _HELP_TEXT = (
 )
 
 _WELCOME_TEXT = (
-    "Enter your 5-digit access code to continue."
+    "Enter Access Code!"
 )
 
 
@@ -134,7 +134,7 @@ def send_whatsapp_message(user_phone: str, response_text: str) -> None:
         return
 
     if not response_text:
-        response_text = "Something went wrong. Please try again."
+        response_text = FALLBACK_MESSAGE
 
     url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
     payload = {
@@ -166,22 +166,21 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
     normalized_text = clean_text.lower()
 
     if normalized_text in _HELP_COMMANDS:
-        create_log(user=user, state=str(state_before))
         return _HELP_TEXT
 
     response_text = ""
     state_after = state_before
 
     if state_before == "NEW":
-        state_after = "ASK_ACCESS_CODE"
+        session = reset_session(user)
+        state_after = str(session.get("state") or "ASK_ACCESS_CODE")
         response_text = _WELCOME_TEXT
-        update_session(user, state=state_after)
 
     elif state_before == "ASK_ACCESS_CODE":
         access_code = clean_text
         if not _is_valid_access_code(access_code):
             state_after = "ASK_ACCESS_CODE"
-            response_text = "Invalid access code format. Please enter a 5-digit code."
+            response_text = "Invalid access code format. Please enter a 6-digit code."
             update_session(user, state=state_after)
         else:
             access_code_int = _to_access_code_int(access_code)
@@ -224,10 +223,8 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
             registration_access_code = _to_access_code_int(session.get("access_code"))
             if registration_access_code is None:
                 state_after = "ASK_ACCESS_CODE"
-                response_text = "Enter your 5-digit access code to continue."
+                response_text = _WELCOME_TEXT
                 update_session(user, state=state_after)
-                current_state = (get_or_create_session(user).get("state") or "NEW")
-                create_log(user=user, state=current_state)
                 return response_text
 
             state_after = "ACTIVE"
@@ -247,15 +244,12 @@ def _compute_reply_and_update_state(user: str, text: str) -> str:
         update_session(user, state=state_after)
 
     else:
-        state_after = "ASK_ACCESS_CODE"
+        session = reset_session(user)
+        state_after = str(session.get("state") or "ASK_ACCESS_CODE")
         response_text = _WELCOME_TEXT
-        update_session(user, state=state_after)
 
     if not response_text:
         response_text = "Something went wrong. Please try again."
-
-    current_state = (get_or_create_session(user).get("state") or "NEW")
-    create_log(user=user, state=current_state)
 
     return response_text
 
@@ -266,13 +260,13 @@ async def _background_send_reply(user: str, text: str, reply: str) -> None:
     if final_reply == "CALL_RAG":
         try:
             rag_result = await asyncio.to_thread(query_rag_service, text)
-            final_reply = str(rag_result.get("answer") or "")
+            final_reply = str(rag_result.get("answer", FALLBACK_MESSAGE))
         except Exception:
-            logger.error("RAG unavailable")
-            final_reply = "🚫 Access denied. This service is restricted to authorized users. Please contact the system administrator to request access."
+            logger.error("RAG unavailable → fallback triggered")
+            final_reply = FALLBACK_MESSAGE
 
     if not final_reply:
-        final_reply = "Something went wrong. Please try again."
+        final_reply = FALLBACK_MESSAGE
 
     async def safe_send() -> None:
         try:
@@ -298,8 +292,8 @@ async def handle_post(req: Request):
         try:
             data = await req.json()
         except Exception:
-            logger.exception("Invalid JSON payload")
-            return _message_response("unknown", "Sorry, I could not read your message. Please try again.")
+            logger.error("Invalid JSON payload")
+            return _message_response("unknown", FALLBACK_MESSAGE)
 
         if "entry" not in data:
             return {"status": "ignored"}
@@ -314,12 +308,12 @@ async def handle_post(req: Request):
             if response_text == "CALL_RAG":
                 try:
                     rag_result = await asyncio.to_thread(query_rag_service, text)
-                    response_text = str(rag_result.get("answer") or "")
+                    response_text = str(rag_result.get("answer", FALLBACK_MESSAGE))
                 except Exception:
-                    logger.error("RAG unavailable")
-                    response_text = "🚫 Access denied. This service is restricted to authorized users. Please contact the system administrator to request access."
+                    logger.error("RAG unavailable → fallback triggered")
+                    response_text = FALLBACK_MESSAGE
             if not response_text:
-                response_text = "Something went wrong. Please try again."
+                response_text = FALLBACK_MESSAGE
             return _message_response(user, response_text)
 
         parsed_messages = _extract_whatsapp_messages(data)
@@ -329,17 +323,17 @@ async def handle_post(req: Request):
         for user, text in parsed_messages:
             reply = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
             if not reply:
-                reply = "Something went wrong. Please try again."
+                reply = FALLBACK_MESSAGE
             if reply == "CALL_RAG":
                 try:
                     rag_result = await asyncio.to_thread(query_rag_service, text)
-                    reply = str(rag_result.get("answer") or "")
+                    reply = str(rag_result.get("answer", FALLBACK_MESSAGE))
                 except Exception:
-                    logger.error("RAG unavailable")
-                    reply = "🚫 Access denied. This service is restricted to authorized users. Please contact the system administrator to request access."
+                    logger.error("RAG unavailable → fallback triggered")
+                    reply = FALLBACK_MESSAGE
             _schedule_safe_background_send(user, text, reply)
 
         return {"status": "accepted"}
     except Exception as e:
-        print("CRASH:", str(e))
+        logger.error("DB ERROR: %s", str(e))
         return {"status": "error"}

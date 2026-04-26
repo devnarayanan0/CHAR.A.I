@@ -28,3 +28,15 @@ CREATE POLICY allow_update_users
 ON users
 FOR UPDATE
 USING (true);
+
+CREATE TABLE IF NOT EXISTS user_messages (
+    id bigserial PRIMARY KEY,
+    phone text NOT NULL,
+    access_code bigint,
+    role text NOT NULL,
+    content text NOT NULL,
+    created_at timestamp DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_messages_phone_time
+ON user_messages(phone, created_at DESC);

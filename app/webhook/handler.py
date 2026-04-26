@@ -9,6 +9,7 @@ import requests
 from fastapi import Request
 from fastapi.responses import PlainTextResponse
 
+from app.admin.log_store import log_message
 from app.config.settings import get_settings
 from app.rag.client import FALLBACK_MESSAGE, query_rag_service
 from app.users.service import (
@@ -116,6 +117,11 @@ def _to_access_code_int(value: str | int | None) -> int | None:
 
 def _message_response(user: str, message: str) -> dict[str, str]:
     return {"user": user, "message": message}
+
+
+def _current_access_code(user: str) -> int | None:
+    session = get_or_create_session(user)
+    return _to_access_code_int(session.get("access_code"))
 
 
 def normalize_phone(phone: str) -> str:
@@ -272,9 +278,13 @@ async def _post_registration_rag_check(user: str) -> str:
 
 
 async def _send_registration_welcome_and_check(user: str) -> None:
-    await asyncio.to_thread(send_whatsapp_message, user, "Welcome to CHAR.A.I !")
+    access_code = _current_access_code(user)
+    welcome_text = "Welcome to CHAR.A.I !"
+    log_message(user, access_code, "assistant", welcome_text)
+    await asyncio.to_thread(send_whatsapp_message, user, welcome_text)
     fallback_reply = await _post_registration_rag_check(user)
     if fallback_reply:
+        log_message(user, access_code, "assistant", fallback_reply)
         await asyncio.to_thread(send_whatsapp_message, user, fallback_reply)
 
 
@@ -328,6 +338,8 @@ async def handle_post(req: Request):
         local_parsed = _parse_local_request(data)
         if local_parsed:
             user, text = local_parsed
+            access_code = _current_access_code(user)
+            log_message(user, access_code, "user", text)
             response_text = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
             if response_text == _REGISTRATION_COMPLETE:
                 fallback_reply = await _post_registration_rag_check(user)
@@ -341,6 +353,7 @@ async def handle_post(req: Request):
                     response_text = FALLBACK_MESSAGE
             if not response_text:
                 response_text = FALLBACK_MESSAGE
+            log_message(user, _current_access_code(user), "assistant", response_text)
             return _message_response(user, response_text)
 
         parsed_messages = _extract_whatsapp_messages(data)
@@ -348,6 +361,8 @@ async def handle_post(req: Request):
             return {"status": "accepted"}
 
         for user, text in parsed_messages:
+            access_code = _current_access_code(user)
+            log_message(user, access_code, "user", text)
             reply = await asyncio.to_thread(_compute_reply_and_update_state, user, text)
             if reply == _REGISTRATION_COMPLETE:
                 asyncio.create_task(_send_registration_welcome_and_check(user))
@@ -361,6 +376,7 @@ async def handle_post(req: Request):
                 except Exception:
                     logger.error("RAG unavailable → fallback triggered")
                     reply = FALLBACK_MESSAGE
+            log_message(user, _current_access_code(user), "assistant", reply)
             _schedule_safe_background_send(user, text, reply)
 
         return {"status": "accepted"}

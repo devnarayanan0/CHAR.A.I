@@ -67,26 +67,64 @@ async function runIngestion() {
   }
 }
 
-function renderActivityRows(logs) {
-  if (!Array.isArray(logs) || logs.length === 0) {
+function renderActivityRows(groups) {
+  if (!Array.isArray(groups) || groups.length === 0) {
     activityTable.innerHTML = `
-      <tr>
-          <td colspan="3" class="empty-cell">No activity yet.</td>
-      </tr>
+      <div class="empty-cell">No user logs yet.</div>
     `;
     return;
   }
 
-  activityTable.innerHTML = logs
-    .map(
-      (log) => `
-        <tr>
-            <td>${log.user || "unknown"}</td>
-            <td>${new Date(log.timestamp).toLocaleString()}</td>
-            <td><span class="pill pill-green"><span class="pill-dot"></span>${log.state || "UNKNOWN"}</span></td>
-        </tr>
-      `,
-    )
+  const escapeHtml = (value) =>
+    String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+
+  activityTable.innerHTML = groups
+    .map((group) => {
+      const userName = escapeHtml(group.name || "Unknown");
+      const phone = escapeHtml(group.phone || "-");
+      const email = escapeHtml(group.email || "-");
+      const lastActivity = group.last_activity
+        ? escapeHtml(new Date(group.last_activity).toLocaleString())
+        : "-";
+      const messages = Array.isArray(group.messages) ? group.messages : [];
+
+      const logItems = messages.length
+        ? messages
+            .map((entry) => {
+              const role = String(entry.role || "assistant").toLowerCase();
+              const roleLabel = role === "user" ? "User" : "Assistant";
+              const content = escapeHtml(entry.content || "(empty message)");
+              const timestamp = entry.time
+                ? escapeHtml(new Date(entry.time).toLocaleString())
+                : "-";
+              return `
+                <li class="log-item">
+                  <div class="log-role">${roleLabel}</div>
+                  <div class="log-question">${content}</div>
+                  <div class="log-time">${timestamp}</div>
+                </li>
+              `;
+            })
+            .join("")
+        : '<li class="log-item"><div class="log-question">No messages yet.</div></li>';
+
+      return `
+        <details class="user-log-card">
+          <summary>
+            <div class="user-log-header">
+              <div class="user-log-name">${userName}</div>
+              <div class="user-log-meta">Phone: ${phone} • Email: ${email} • Last activity: ${lastActivity} • Messages: ${messages.length}</div>
+            </div>
+          </summary>
+          <ul class="log-list">${logItems}</ul>
+        </details>
+      `;
+    })
     .join("");
 }
 
@@ -102,9 +140,7 @@ async function loadActivity() {
     renderActivityRows(logs);
   } catch (error) {
     activityTable.innerHTML = `
-      <tr>
-          <td colspan="3" class="empty-cell">${error.message}</td>
-      </tr>
+      <div class="empty-cell">${error.message}</div>
     `;
   }
 }

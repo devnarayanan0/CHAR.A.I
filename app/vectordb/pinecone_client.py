@@ -44,7 +44,7 @@ def _validate_dimension(vector: list[float]) -> None:
     logger.debug("✓ Vector dimension valid: %d", actual_dim)
 
 
-def query_pinecone(vector: list[float], top_k: int = 3) -> list[str]:
+def query_pinecone(vector: list[float], top_k: int = 10, min_score: float = 0.15) -> list[str]:
     """Query Pinecone for similar vectors and retrieve metadata chunks."""
     logger.debug("🔍 Validating query vector...")
     try:
@@ -79,11 +79,27 @@ def query_pinecone(vector: list[float], top_k: int = 3) -> list[str]:
             metadata = match.get("metadata") or {}
             text = metadata.get("text")
             source = metadata.get("source", "unknown")
-            score = match.get("score", 0)
+            score = match.get("score")
+
+            if score is not None and score < min_score:
+                logger.debug(
+                    "⏭ Skipping low-score match %d: source=%s score=%.3f min_score=%.3f",
+                    idx + 1,
+                    source,
+                    score,
+                    min_score,
+                )
+                continue
             
             if text:
                 chunks.append(text)
-                logger.debug("📌 Match %d: source=%s score=%.3f text_len=%d", idx + 1, source, score, len(text))
+                logger.debug(
+                    "📌 Match %d: source=%s score=%s text_len=%d",
+                    idx + 1,
+                    source,
+                    f"{score:.3f}" if score is not None else "n/a",
+                    len(text),
+                )
             else:
                 logger.warning("❌ Match %d has no text in metadata", idx + 1)
         except Exception as exc:

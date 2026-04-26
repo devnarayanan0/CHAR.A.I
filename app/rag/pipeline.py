@@ -1,10 +1,32 @@
 from __future__ import annotations
 
+import logging
+import re
+
 import requests
 
 from app.config.settings import get_settings
 from app.embeddings.model import embed
 from app.vectordb.pinecone_client import query_pinecone
+
+
+logger = logging.getLogger(__name__)
+
+
+def normalize_query(query: str) -> str:
+    normalized = query.lower()
+    replacements = {
+        r"\bcred\b": "credit",
+        r"\bacct\b": "account",
+        r"\bauth\b": "authentication",
+        r"\bscan\b": "scanning",
+    }
+
+    for pattern, replacement in replacements.items():
+        normalized = re.sub(pattern, replacement, normalized)
+
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
 
 
 def ask_llm(query: str, context: str) -> str:
@@ -36,8 +58,10 @@ Question: {query}
 
 
 def run_rag(query: str) -> dict:
-    vector = embed(query)
-    chunks = query_pinecone(vector)
+    normalized_query = normalize_query(query)
+    vector = embed(normalized_query)
+    chunks = query_pinecone(vector, top_k=10)
+    logger.error("RAG RETRIEVED CONTEXT: %s", chunks)
     context = "\n\n".join(chunks)
     answer = ask_llm(query, context)
 

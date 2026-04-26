@@ -48,4 +48,16 @@ echo "Set this in Railway:"
 echo "RAG_SERVICE_URL=${PUBLIC_URL}"
 
 # Keep both processes running in background until interrupted.
-wait -n "$RAG_PID" "$NGROK_PID"
+while kill -0 "$RAG_PID" 2>/dev/null && kill -0 "$NGROK_PID" 2>/dev/null; do
+  sleep 1
+done
+
+if ! kill -0 "$RAG_PID" 2>/dev/null; then
+  echo "RAG server stopped" >&2
+  exit 1
+fi
+
+if ! kill -0 "$NGROK_PID" 2>/dev/null; then
+  echo "ngrok tunnel stopped" >&2
+  exit 1
+fi

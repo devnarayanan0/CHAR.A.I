@@ -230,7 +230,7 @@ def upsert_to_pinecone(source: str, chunks: list[str], embeddings: list[list[flo
 
 
 def ingest_local_documents() -> dict[str, int]:
-    logger.info("=== INGESTION PIPELINE START ===\")
+    logger.info("=== INGESTION PIPELINE START ===")
     changed_documents, removed_documents, state = load_local_documents()
     known_files = state.setdefault("files", {})
 
@@ -308,7 +308,7 @@ def ingest_local_documents() -> dict[str, int]:
         "uploaded_chunks": uploaded,
     }
 
-    logger.info("=== INGESTION PIPELINE COMPLETE ===\")
+    logger.info("=== INGESTION PIPELINE COMPLETE ===")
     logger.info("📊 Summary: processed=%d removed=%d skipped=%d uploaded=%d",
                 result["processed_files"],
                 result["removed_files"],

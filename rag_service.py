@@ -38,7 +38,7 @@ async def health():
 
 @app.post("/query")
 async def query(payload: QueryPayload):
-    logger.info("=== /query ENDPOINT HIT ===\")
+    logger.info("=== /query ENDPOINT HIT ===")
     logger.info("📨 RAG received query: %s", payload.query)
     
     try:
@@ -65,7 +65,7 @@ async def query(payload: QueryPayload):
 
 @app.post("/ingest")
 async def ingest():
-    logger.info("=== /ingest ENDPOINT HIT ===\")
+    logger.info("=== /ingest ENDPOINT HIT ===")
     
     try:
         logger.info("🚀 Starting local document ingestion...")

@@ -9,6 +9,15 @@ from app.config.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
+def _is_missing_table_error(exc: Exception) -> bool:
+    details = getattr(exc, "args", ())
+    if not details:
+        return False
+
+    message = str(details[0])
+    return "PGRST205" in message or "Could not find the table 'public.user_messages'" in message
+
+
 @lru_cache(maxsize=1)
 def _get_supabase_client():
     settings = get_settings()
@@ -28,7 +37,7 @@ def _get_supabase_client():
         return None
 
 
-def log_message(phone: str, access_code: int | None, role: str, content: str) -> None:
+def log_message(phone: str, role: str, content: str) -> None:
     cleaned_phone = str(phone or "").strip()
     cleaned_content = str(content or "").strip()
     cleaned_role = str(role or "").strip().lower()
@@ -45,16 +54,15 @@ def log_message(phone: str, access_code: int | None, role: str, content: str) ->
         "role": cleaned_role,
         "content": cleaned_content,
     }
-    if access_code is not None:
-        payload["access_code"] = access_code
 
     try:
         client.table("user_messages").insert(payload).execute()
     except Exception as exc:
-        logger.error("LOG ERROR: %s", str(exc))
+        if not _is_missing_table_error(exc):
+            logger.error("LOG ERROR: %s", str(exc))
 
 
-def get_grouped_logs(limit_users: int = 200, limit_messages_per_user: int = 50) -> list[dict[str, Any]]:
+def get_log_index(limit_users: int = 200) -> list[dict[str, Any]]:
     client = _get_supabase_client()
     if client is None:
         return []
@@ -62,14 +70,15 @@ def get_grouped_logs(limit_users: int = 200, limit_messages_per_user: int = 50) 
     try:
         result = (
             client.table("user_messages")
-            .select("phone, role, content, created_at")
+            .select("phone, created_at")
             .order("created_at", desc=True)
-            .limit(max(limit_users * limit_messages_per_user * 4, 1000))
+            .limit(max(limit_users * 100, 1000))
             .execute()
         )
         rows = getattr(result, "data", None) or []
     except Exception as exc:
-        logger.error("LOG ERROR: %s", str(exc))
+        if not _is_missing_table_error(exc):
+            logger.error("LOG ERROR: %s", str(exc))
         return []
 
     grouped: dict[str, dict[str, Any]] = {}
@@ -82,51 +91,14 @@ def get_grouped_logs(limit_users: int = 200, limit_messages_per_user: int = 50) 
             phone,
             {
                 "phone": phone,
-                "name": "Unknown",
-                "email": "",
                 "last_activity": str((row or {}).get("created_at") or ""),
-                "messages": [],
+                "message_count": 0,
             },
         )
-
-        if len(group["messages"]) >= limit_messages_per_user:
-            continue
-
-        group["messages"].append(
-            {
-                "role": str((row or {}).get("role") or "assistant"),
-                "content": str((row or {}).get("content") or ""),
-                "time": str((row or {}).get("created_at") or ""),
-            }
-        )
+        group["message_count"] += 1
 
     if not grouped:
         return []
-
-    for group in grouped.values():
-        group["messages"].reverse()
-
-    try:
-        user_result = client.table("users").select("name, phone, email").execute()
-        user_rows = getattr(user_result, "data", None) or []
-        user_map = {
-            str((row or {}).get("phone") or "").strip(): {
-                "name": str((row or {}).get("name") or "Unknown"),
-                "email": str((row or {}).get("email") or ""),
-            }
-            for row in user_rows
-            if str((row or {}).get("phone") or "").strip()
-        }
-    except Exception as exc:
-        logger.error("LOG ERROR: %s", str(exc))
-        user_map = {}
-
-    for phone, group in grouped.items():
-        user = user_map.get(phone)
-        if not user:
-            continue
-        group["name"] = user["name"]
-        group["email"] = user["email"]
 
     ordered = sorted(
         grouped.values(),
@@ -134,3 +106,33 @@ def get_grouped_logs(limit_users: int = 200, limit_messages_per_user: int = 50) 
         reverse=True,
     )
     return ordered[:limit_users]
+
+
+def get_user_messages(phone: str) -> list[dict[str, Any]]:
+    client = _get_supabase_client()
+    cleaned_phone = str(phone or "").strip()
+    if client is None or not cleaned_phone:
+        return []
+
+    try:
+        result = (
+            client.table("user_messages")
+            .select("role, content, created_at")
+            .eq("phone", cleaned_phone)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        rows = getattr(result, "data", None) or []
+    except Exception as exc:
+        if not _is_missing_table_error(exc):
+            logger.error("LOG ERROR: %s", str(exc))
+        return []
+
+    return [
+        {
+            "role": str((row or {}).get("role") or "assistant").strip().lower(),
+            "content": str((row or {}).get("content") or ""),
+            "created_at": str((row or {}).get("created_at") or ""),
+        }
+        for row in rows
+    ]

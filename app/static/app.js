@@ -13,6 +13,25 @@ const statusDot = document.getElementById("status-dot");
 const activityTable = document.getElementById("activity-table");
 
 let activityRefreshTimer = null;
+const messageCache = new Map();
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatTimestamp(value) {
+  if (!value) {
+    return "-";
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? escapeHtml(value) : escapeHtml(parsed.toLocaleString());
+}
 
 function showPage(page) {
   const ingestionActive = page === "ingestion";
@@ -53,18 +72,96 @@ async function runIngestion() {
 
     processedFiles.textContent = String(result.processed_files ?? 0);
     uploadedChunks.textContent = String(result.uploaded_chunks ?? 0);
-      ingestionStatus.textContent = String(result.status || "SUCCESS");
-      ingestionState.textContent = "Last run: just now";
-      statusDot.className = "status-dot done";
-      ingestionSuccess.style.display = "flex";
+    ingestionStatus.textContent = String(result.status || "SUCCESS");
+    ingestionState.textContent = "Last run: just now";
+    statusDot.className = "status-dot done";
+    ingestionSuccess.style.display = "flex";
   } catch (error) {
     ingestionState.textContent = error.message;
     ingestionStatus.textContent = "FAILED";
-      statusDot.className = "status-dot";
+    statusDot.className = "status-dot";
   } finally {
     runIngestionButton.disabled = false;
-      ingestionSpinner.style.display = "none";
+    ingestionSpinner.style.display = "none";
   }
+}
+
+async function loadConversation(phone, bodyElement) {
+  const cacheKey = String(phone || "").trim();
+  if (!cacheKey) {
+    return;
+  }
+
+  if (messageCache.has(cacheKey)) {
+    renderConversationBody(bodyElement, messageCache.get(cacheKey));
+    return;
+  }
+
+  bodyElement.innerHTML = '<div class="empty-cell">Loading messages...</div>';
+
+  const response = await fetch(`/admin/logs/${encodeURIComponent(cacheKey)}`);
+  const messages = await response.json();
+
+  if (!response.ok) {
+    throw new Error("Failed to load user messages");
+  }
+
+  messageCache.set(cacheKey, Array.isArray(messages) ? messages : []);
+  renderConversationBody(bodyElement, messageCache.get(cacheKey));
+}
+
+function renderConversationBody(bodyElement, messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    bodyElement.innerHTML = '<div class="empty-cell">No messages for this user yet.</div>';
+    return;
+  }
+
+  bodyElement.innerHTML = `
+    <ul class="conversation-list">
+      ${messages
+        .map((entry) => {
+          const role = String(entry.role || "assistant").toLowerCase();
+          const roleLabel = role === "user" ? "User" : "Assistant";
+          const turnClass = role === "user" ? "turn-user" : "turn-assistant";
+          return `
+            <li class="conversation-turn ${turnClass}">
+              <div class="conversation-role">${roleLabel}</div>
+              <div class="conversation-content">${escapeHtml(entry.content || "(empty message)")}</div>
+              <div class="conversation-time">${formatTimestamp(entry.created_at)}</div>
+            </li>
+          `;
+        })
+        .join("")}
+    </ul>
+  `;
+}
+
+function bindExpandableCards() {
+  activityTable.querySelectorAll(".user-log-card").forEach((card) => {
+    if (card.dataset.bound === "1") {
+      return;
+    }
+
+    card.dataset.bound = "1";
+    card.addEventListener("toggle", async () => {
+      if (!card.open || card.dataset.loaded === "1") {
+        return;
+      }
+
+      const phone = card.dataset.phone || "";
+      const bodyElement = card.querySelector("[data-conversation-body]");
+      if (!(bodyElement instanceof HTMLElement)) {
+        return;
+      }
+
+      try {
+        await loadConversation(phone, bodyElement);
+        card.dataset.loaded = "1";
+      } catch (error) {
+        bodyElement.innerHTML = `<div class="empty-cell">${escapeHtml(error.message)}</div>`;
+      }
+    });
+  });
 }
 
 function renderActivityRows(groups) {
@@ -75,57 +172,30 @@ function renderActivityRows(groups) {
     return;
   }
 
-  const escapeHtml = (value) =>
-    String(value ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#39;");
-
   activityTable.innerHTML = groups
     .map((group) => {
-      const userName = escapeHtml(group.name || "Unknown");
       const phone = escapeHtml(group.phone || "-");
-      const email = escapeHtml(group.email || "-");
-      const lastActivity = group.last_activity
-        ? escapeHtml(new Date(group.last_activity).toLocaleString())
-        : "-";
-      const messages = Array.isArray(group.messages) ? group.messages : [];
-
-      const logItems = messages.length
-        ? messages
-            .map((entry) => {
-              const role = String(entry.role || "assistant").toLowerCase();
-              const roleLabel = role === "user" ? "User" : "Assistant";
-              const content = escapeHtml(entry.content || "(empty message)");
-              const timestamp = entry.time
-                ? escapeHtml(new Date(entry.time).toLocaleString())
-                : "-";
-              return `
-                <li class="log-item">
-                  <div class="log-role">${roleLabel}</div>
-                  <div class="log-question">${content}</div>
-                  <div class="log-time">${timestamp}</div>
-                </li>
-              `;
-            })
-            .join("")
-        : '<li class="log-item"><div class="log-question">No messages yet.</div></li>';
+      const lastActivity = formatTimestamp(group.last_activity);
+      const messageCount = Number(group.message_count ?? 0);
 
       return `
-        <details class="user-log-card">
+        <details class="user-log-card" data-phone="${phone}">
           <summary>
             <div class="user-log-header">
-              <div class="user-log-name">${userName}</div>
-              <div class="user-log-meta">Phone: ${phone} • Email: ${email} • Last activity: ${lastActivity} • Messages: ${messages.length}</div>
+              <div class="user-log-name">${phone}</div>
+              <div class="user-log-meta">Last activity: ${lastActivity} • Messages: ${messageCount}</div>
             </div>
+            <div class="user-log-toggle">▾</div>
           </summary>
-          <ul class="log-list">${logItems}</ul>
+          <div class="conversation-shell" data-conversation-body>
+            <div class="empty-cell">Click to load messages.</div>
+          </div>
         </details>
       `;
     })
     .join("");
+
+  bindExpandableCards();
 }
 
 async function loadActivity() {
@@ -140,7 +210,7 @@ async function loadActivity() {
     renderActivityRows(logs);
   } catch (error) {
     activityTable.innerHTML = `
-      <div class="empty-cell">${error.message}</div>
+      <div class="empty-cell">${escapeHtml(error.message)}</div>
     `;
   }
 }

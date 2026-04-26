@@ -15,11 +15,21 @@ logger = logging.getLogger(__name__)
 
 def normalize_query(query: str) -> str:
     normalized = query.lower()
+
+    # Preserve product/domain intent before single-word replacements.
+    phrase_replacements = {
+        r"\bcred\s*scan\b": "credibility scan",
+        r"\bcredscan\b": "credibility scan",
+    }
+
+    for pattern, replacement in phrase_replacements.items():
+        normalized = re.sub(pattern, replacement, normalized)
+
     replacements = {
-        r"\bcred\b": "credit",
+        r"\bcred\b": "credibility",
         r"\bacct\b": "account",
         r"\bauth\b": "authentication",
-        r"\bscan\b": "scanning",
+        r"\bscan\b": "scan",
     }
 
     for pattern, replacement in replacements.items():

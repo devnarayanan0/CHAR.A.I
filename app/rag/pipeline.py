@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import re
+from time import perf_counter
+from uuid import uuid4
 
 import requests
 
@@ -68,12 +70,36 @@ Question: {query}
 
 
 def run_rag(query: str) -> dict:
-    normalized_query = normalize_query(query)
-    vector = embed(normalized_query)
-    chunks = query_pinecone(vector, top_k=10)
-    logger.error("RAG RETRIEVED CONTEXT: %s", chunks)
-    context = "\n\n".join(chunks)
-    answer = ask_llm(query, context)
+    trace_id = uuid4().hex[:8]
+    start = perf_counter()
+    logger.info("[RAG][%s] START query=%r", trace_id, query)
+
+    try:
+        normalized_query = normalize_query(query)
+        logger.info("[RAG][%s] NORMALIZE original=%r normalized=%r", trace_id, query, normalized_query)
+
+        embed_start = perf_counter()
+        vector = embed(normalized_query)
+        logger.info("[RAG][%s] EMBED dim=%d took=%.3fs", trace_id, len(vector), perf_counter() - embed_start)
+
+        retrieve_start = perf_counter()
+        chunks = query_pinecone(vector, top_k=10)
+        logger.info(
+            "[RAG][%s] RETRIEVE chunks=%d took=%.3fs", trace_id, len(chunks), perf_counter() - retrieve_start
+        )
+        logger.info("[RAG][%s] RETRIEVED_CONTEXT %s", trace_id, chunks)
+
+        context = "\n\n".join(chunks)
+        logger.info("[RAG][%s] CONTEXT_BUILT chars=%d", trace_id, len(context))
+
+        llm_start = perf_counter()
+        answer = ask_llm(query, context)
+        logger.info("[RAG][%s] LLM answer_len=%d took=%.3fs", trace_id, len(answer), perf_counter() - llm_start)
+    except Exception:
+        logger.exception("[RAG][%s] FAILED", trace_id)
+        raise
+
+    logger.info("[RAG][%s] DONE total=%.3fs", trace_id, perf_counter() - start)
 
     return {
         "query": query,

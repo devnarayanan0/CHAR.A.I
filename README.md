@@ -1,5 +1,5 @@
 <div align="center">
-
+ 
 <img src="asserts/3.png" alt="CHAR.AI" width="90" height="90" />
 
 # CHAR.AI
